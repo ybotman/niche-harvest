@@ -12,11 +12,13 @@
     "smoke:mock-fb": "node --experimental-strip-types test/mock-fb/smoke-test.ts"
   },
   "dependencies": {
+    "js-yaml": "^4.1.0",
     "mongodb": "^6.20.0",
     "rrule": "^2.8.1"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0"
   }
 }

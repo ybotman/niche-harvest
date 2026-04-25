@@ -650,6 +650,7 @@ Runtime dependencies (production):
 
 - `mongodb` — pinned `^6.20.0` to match calendar-be-af major (Fulton 2026-04-25). ObjectId serialization is stable across 6.x; pre-6 had subtle differences. Used by `loader/mongo-direct.ts`.
 - `rrule` — pinned `^2.8.1` to match BE/FE major for parse parity (Fulton 2026-04-25). RRULE validation runs at classify time per LOADER-CONTRACT §10.3 — runtime operation, not build-time. If FE upgrades and we don't, validation passes here might fail there silently.
+- `js-yaml` — pinned `^4.1.0` to match calendar-be-af. Used by `core/config.ts` to parse `niche.yaml`. Earlier draft committed to "zero-dep YAML parser" but rolling a custom YAML parser is fragile (empty values, multi-line strings, escaped chars all bite). `js-yaml` is pure-JS, no native binaries, ARM64-clean, ~0.5 MB, the same parser BE uses — additive risk is negligible. Drift adopted 2026-04-25 (v5).
 - Node 22 built-ins: `node:sqlite` (WAL, foreign keys), `node:https` (HTTP), `node:crypto` (SHA256), `node:fs`, `node:path`, `node:events`.
 - Booker's `booker/scripts/lib/*` imported directly (Option 1 CDP seam per LOADER-CONTRACT §14.1.1). Not an npm package; resolved via relative import.
 
