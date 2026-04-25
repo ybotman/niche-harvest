@@ -36,6 +36,7 @@ interface EnrichOpts {
   niche: string;
   dryRun: boolean;
   maxGeocodes: number;
+  retryFailedVenues: boolean;
 }
 
 function parseCli(argv: string[]): EnrichOpts {
@@ -47,6 +48,7 @@ function parseCli(argv: string[]): EnrichOpts {
     niche,
     dryRun: args.includes("--dry-run"),
     maxGeocodes: maxGeocodesStr ? Number(maxGeocodesStr) : 50,
+    retryFailedVenues: args.includes("--retry-failed-venues"),
   };
 }
 
@@ -251,6 +253,36 @@ async function main(): Promise<void> {
     by_skip_reason: summary.totals.by_skip_reason,
   });
 
+  // ─── Optional pass 1.5: re-queue venues with geocode_status='failed' ───
+  // Use case: improved geocoder logic landed; want to retry previously-failed
+  // venues without resetting raw_events. Independent of raw_events status.
+  if (opts.retryFailedVenues) {
+    const failedRows = db
+      .prepare(`
+        SELECT fingerprint, name FROM venues
+        WHERE geocode_status = 'failed'
+        ORDER BY id
+      `)
+      .all() as unknown as { fingerprint: string; name: string }[];
+    let requeued = 0;
+    for (const r of failedRows) {
+      if (!venueQueue.has(r.fingerprint)) {
+        venueQueue.set(r.fingerprint, {
+          fingerprint: r.fingerprint,
+          venue_text: r.name,
+          first_event_id: 0, // not tied to a specific raw_event (retry context)
+        });
+        requeued += 1;
+      }
+    }
+    log.info("retry-failed-venues queued", {
+      previously_failed: failedRows.length,
+      newly_requeued: requeued,
+      queue_size_after: venueQueue.size,
+    });
+    summary.totals.unique_venues = venueQueue.size;
+  }
+
   // ─── Pass 2: Geocode unique venues (rate-limited; cap by --max-geocodes) ───
   const upsertVenue = db.prepare(`
     INSERT INTO venues (fingerprint, name, lat, lng, country, geocode_source, geocode_status)
@@ -329,12 +361,17 @@ async function main(): Promise<void> {
         );
         // Pin the failure to the first raw_event that referenced this venue
         // — gives the operator a single trace path back to source for review.
-        insertVenueQualityFlag.run(
-          v.first_event_id,
-          null,
-          "geocode_failed",
-          result.reject_reason ?? null,
-        );
+        // Skip the quality_flag insert on retry-failed-venues path
+        // (first_event_id=0 means "no tying event"; the original failure
+        // already has its quality_flag from the first enrich pass).
+        if (v.first_event_id > 0) {
+          insertVenueQualityFlag.run(
+            v.first_event_id,
+            null,
+            "geocode_failed",
+            result.reject_reason ?? null,
+          );
+        }
       }
     }
   }
