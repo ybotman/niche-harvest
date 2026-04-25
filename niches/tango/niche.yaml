@@ -1,0 +1,427 @@
+# niche.yaml — Tango (appId=1) — niche-harvest M1 starting inventory
+#
+# AUTHORITY: This file is THE niche definition contract. core/config.ts loads it;
+# every niche-specific behavior in core/ flows from values declared here. Adding
+# a new niche means creating niches/<name>/niche.yaml — zero core code changes.
+#
+# REFERENCES:
+#   - LOADER-CONTRACT.md §7 — category taxonomy authority (tango = 10 strings)
+#   - LOADER-CONTRACT.md §16.5 — cross-niche abstraction points (what each niche.yaml drives)
+#   - ARCHITECTURE.md §4 — adapter interface + registry keys
+#   - SAFEGUARD-SPEC.md §3-4 — FB rate-limiter + block-detector values
+#   - AIDI 2026-04-24 (memory: project_niche_harvest_m1_scope) — M1 source scope
+#   - Booker 2026-04-24 candidate CSV — Collab/handoffs/narvest/m1-group-inheritance-candidates.csv
+#
+# DRAFT — first cut 2026-04-24. Will tighten as Phase 1 implementation surfaces gaps.
+
+niche:
+  key: tango
+  display_name: Tango (Argentine)
+  appid: 1                          # MasterCalendar appId; FE = TangoTiempo
+  language_default: en
+  description: >
+    Argentine Tango community calendar coverage. Sources are the existing
+    Harvey/Booker/Porter inventory (parity goal per Toby 2026-04-24).
+
+# Runtime persona identity (per ARCHITECTURE §7.0.1)
+persona:
+  runtime_name: narvest-tango
+  runtime_port: 8814
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAXONOMY — categories, identity check, rendered attributes
+# Tango-specific values; framework mechanism is universal (LOADER-CONTRACT §16.5).
+# ─────────────────────────────────────────────────────────────────────────────
+taxonomy:
+
+  # Identity check — gate at ingestion: "is this a tango event at all?"
+  # Untrusted sources must pass identity_check; trusted sources skip it.
+  # Tuned to the keyword set Booker's classify.ts uses + AS-IS evidence.
+  identity_check:
+    require_min_signals: 1
+    positive_keywords:
+      # Core dance-form terms
+      - tango
+      - milonga
+      - practica
+      - práctica
+      - vals
+      - milonguero
+      - tanguera
+      - tanguero
+      # Music + culture
+      - bandoneon
+      - bandoneón
+      - cortina
+      - tanda
+      - abrazo
+      - "tango nuevo"
+      - "tango salon"
+      - "tango argentino"
+      - "argentine tango"
+      # Format-specific (only count when paired with tango context elsewhere)
+      - encuentro
+      - marathon         # generic; identity_check engine should require co-signal
+    negative_keywords:
+      # Hard-no terms — if present, event is NOT tango regardless of positives
+      - "ballroom tango"
+      - "tango fitness"
+      - "yoga tango"
+
+  # Categories — the 10 valid categoryFirst strings (LOADER-CONTRACT §7.1).
+  # `loadable: true` = sent to Mongo when classifier resolves to this category;
+  # `loadable: false` = quality_flag with skip_reason per LOADER-CONTRACT §7.3.
+  # Class is opt-in per niche — tango M1 default OFF (matches Porter today).
+  categories:
+    # SHORT (>=15m, <24h)
+    - name: Milonga
+      duration_group: SHORT
+      loadable: true
+      travel_worthy_eligible: false
+      beginner_eligible: false
+    - name: Practica
+      duration_group: SHORT
+      loadable: true
+      travel_worthy_eligible: false
+      beginner_eligible: false
+    - name: Class
+      duration_group: SHORT
+      loadable: false              # opt-in via loader.load_classes (default false)
+      travel_worthy_eligible: false
+      beginner_eligible: true
+
+    # LONG (>=24h, <=168h)
+    - name: Festival
+      duration_group: LONG
+      loadable: true
+      travel_worthy_eligible: true
+      beginner_eligible: false
+    - name: Marathon
+      duration_group: LONG
+      loadable: true
+      travel_worthy_eligible: true
+      beginner_eligible: false
+    - name: Encuentro
+      duration_group: LONG
+      loadable: true
+      travel_worthy_eligible: true
+      beginner_eligible: false
+    - name: Workshop
+      duration_group: LONG
+      loadable: true
+      travel_worthy_eligible: true
+      beginner_eligible: true
+
+    # NEUTRAL (skip — emit quality_flag with skip_reason)
+    - name: Trip
+      duration_group: NEUTRAL
+      loadable: false              # skip_trip
+      travel_worthy_eligible: false
+      beginner_eligible: false
+    - name: Unknown
+      duration_group: NEUTRAL
+      loadable: false              # skip_unknown — routes to NEW human triage
+      travel_worthy_eligible: false
+      beginner_eligible: false
+    - name: Performance
+      duration_group: NEUTRAL
+      loadable: false              # skip_performance (Discovery-only category)
+      travel_worthy_eligible: false
+      beginner_eligible: false
+
+  # Rendered attributes — niche-specific event attribute fields the FE displays.
+  # Classifier may extract these from text; loader pre-computes them for events.
+  # NOT category-defining; metadata only. (LOADER-CONTRACT §5.4)
+  rendered_attributes:
+    - name: dj
+      label: "DJ"
+      kind: string
+    - name: orchestra
+      label: "Orchestra (LIVE!)"
+      kind: string
+    - name: instructor
+      label: "Instructor"
+      kind: string
+    - name: cost
+      label: "Cost"
+      kind: string
+
+  # Attributes captured for analysis but never written to Mongo
+  # (LOADER-CONTRACT §1: attributes stays in SQLite, never to MongoDB).
+  internal_only_attributes:
+    - level                        # absolute beginner / open / advanced — feeds beginner_eligible classifier
+    - style                        # nuevo / salon / milonguero — feeds search-only filters someday
+    - musicType                    # alt-tango / traditional / nuevo — research only
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEOCODE — Nominatim trust + bounds
+# (LOADER-CONTRACT §16.5 — niche.yaml owns trusted_country_codes)
+# ─────────────────────────────────────────────────────────────────────────────
+geocode:
+  # Country codes whose Nominatim hits we accept by default.
+  # If geocoder returns a hit OUTSIDE this list, treat as low-confidence and
+  # require additional venue-name signal to accept.
+  trusted_country_codes:
+    - US                           # all 11 YES FB groups + slc-wasatch + nytango
+    - CA                           # tango.berlin via overlap; CA tango venues
+    - AR                           # Argentina — origin niche
+    - DE                           # tango.berlin
+    - NL                           # Amsterdam in MAYBE tier (post-M1 inherit)
+    - PL                           # Krakow in MAYBE tier
+    - CH                           # Zürich in MAYBE tier
+    - GB                           # UK tango scene (post-M1)
+    - IT                           # Italy tango scene (post-M1)
+    - FR                           # France tango scene (post-M1)
+    - AU                           # Melbourne in MAYBE tier
+    - TH                           # Bangkok in MAYBE tier
+  # Reject if geocoder hits one of these (false-positive prone)
+  reject_country_codes:
+    - XK                           # Kosovo (frequent geocoder false-hit)
+  # Distance-from-venue-text bound: reject if Nominatim result is >50km from
+  # any city/state hint in venue text. Caller passes hints to nominatim wrapper.
+  text_distance_bound_km: 50
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOADER — niche-specific load behavior (LOADER-CONTRACT §7.1.1, §16.5)
+# ─────────────────────────────────────────────────────────────────────────────
+loader:
+  # Class loading: opt-in per niche. Tango M1 default OFF — matches Porter
+  # today. Toggle to true to enter Class events into Mongo (still subject
+  # to all other gates).
+  load_classes: false
+
+  # Discovery source string written to Mongo on every venue + event.
+  discovery_source: "niche-harvest"
+
+  # Trust level written to events.trustLevel (PROCESS.md trust ladder).
+  trust_level: "ai_discovered"
+
+  # Mongo target environment for this niche. M1 = TEST only (PROD requires
+  # explicit Toby reauth per PROD-DEPLOY-PROTECTION.md; do NOT change here).
+  mongo_env: test
+
+  # Batch size for direct-Mongo event inserts (LOADER-CONTRACT §8.4).
+  batch_size: 15
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOURCES — concrete inventory M1 scrapes
+# Trusted sources skip identity_check; untrusted require it.
+# adapter must match a key in core/adapters/registry.ts.
+# ─────────────────────────────────────────────────────────────────────────────
+sources:
+
+  # ───── iCal feeds ─────
+  # Source: AIDI 2026-04-24 pick (memory: reference_gcal_harvest_impl).
+  # 338 events, ~90% quality. Steal timezone/dedup/Nominatim-cache logic from
+  # ai-discovered/harvester/scripts/gcal-harvest.ts.
+  ical_feeds:
+    - name: slc-wasatch
+      display_name: Wasatch Tango (Salt Lake City)
+      url: https://calendar.google.com/calendar/ical/wasatchtango%40gmail.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Denver
+
+  # ───── Web pages ─────
+  # Sources: AS-IS-PIPELINE-2026-04-24 inventory + Booker CSV NOT_A_FB_GROUP
+  # markers source-tm + source-nyt (which were always web aggregators).
+  web_pages:
+    - name: tangomango
+      display_name: TangoMango (global tango aggregator)
+      url: https://tangomango.org
+      adapter: web-tangomango
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      notes: "AJAX + HTML pattern; port from harvester/src/adapters/tangomango.ts"
+
+    - name: nytango
+      display_name: NewYorkTango (NYC tango calendar)
+      url: https://newyorktango.com
+      adapter: web-nytango
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      notes: "TABLE layout parser; port from harvester web-page.ts nytango parser"
+
+    # The Events Calendar (WordPress REST API) sites — placeholder slots.
+    # Inventory comes from harvester/config when M1 expands beyond first 2.
+    # - name: tec-example
+    #   display_name: <site>
+    #   url: <site>/wp-json/tribe/events/v1/events
+    #   adapter: web-tec
+    #   trusted: true
+    #   priority: normal
+    #   check_interval_days: 7
+
+    # dc-capital-tangueros — known M1 web target per ARCHITECTURE §2 / Phase 5.
+    # - name: dc-capital-tangueros
+    #   display_name: Capital Tangueros (DC area)
+    #   url: <pending Harvey adapter doc>
+    #   adapter: web-generic
+    #   trusted: true
+    #   priority: normal
+    #   check_interval_days: 7
+
+  # ───── Facebook groups ─────
+  # Source: Booker candidate CSV 2026-04-24 — YES tier only (11 groups).
+  # MAYBE tier (83 groups) deferred to post-M1 manual triage.
+  # NOT_A_FB_GROUP markers (3) excluded — they're aggregator-source markers,
+  # not real FB groups (covered by web_pages above).
+  #
+  # Per SAFEGUARD-SPEC §4: per-group cooldown 14 days hard-gated; per-event
+  # cooldown 30-60s with ±20% jitter; global ceiling 5 groups/day + 50 events/day.
+  # 11 groups @ 14d cadence = <1 group/day average — comfortably under ceiling.
+  facebook_groups:
+    - name: arg-tango-northern-california
+      group_id: arg.tango.in.northern.california
+      display_name: Argentine Tango in Northern California
+      url: https://www.facebook.com/groups/arg.tango.in.northern.california/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 26.00
+      events_synced_historical: 3
+      events_produced_historical: 19
+
+    - name: philadelphia-tango
+      group_id: "154852087884242"
+      display_name: Philadelphia Tango
+      url: https://www.facebook.com/groups/154852087884242/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 18.00
+      events_synced_historical: 2
+      events_produced_historical: 14
+
+    - name: new-orleans-tango
+      group_id: NewOrleansTango
+      display_name: New Orleans Argentine Tango Group
+      url: https://www.facebook.com/groups/NewOrleansTango/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 16.00
+      events_synced_historical: 2
+      events_produced_historical: 12
+
+    - name: tango-society-minnesota
+      group_id: tangosocietyMN
+      display_name: Tango Society of Minnesota
+      url: https://www.facebook.com/groups/tangosocietyMN/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 14.00
+      events_synced_historical: 2
+      events_produced_historical: 8
+
+    - name: argentine-tango-sacramento
+      group_id: "289538382905838"
+      display_name: ARGENTINE TANGO IN SACRAMENTO
+      url: https://www.facebook.com/groups/289538382905838/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 12.00
+      events_synced_historical: 2
+      events_produced_historical: 8
+
+    - name: madison-tango-society
+      group_id: "5797538175"
+      display_name: Madison Tango Society
+      url: https://www.facebook.com/groups/5797538175/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 12.00
+      events_synced_historical: 1
+      events_produced_historical: 9
+
+    - name: boston-tango-news
+      group_id: "688132571205945"
+      display_name: BOSTON TANGO NEWS
+      url: https://www.facebook.com/groups/688132571205945/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 10.83
+      events_synced_historical: 1
+      events_produced_historical: 10
+
+    - name: houston-tango
+      group_id: "23980569997"
+      display_name: Houston Tango
+      url: https://www.facebook.com/groups/23980569997/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 10.00
+      events_synced_historical: 1
+      events_produced_historical: 9
+
+    - name: tango-berlin
+      group_id: tango.berlin
+      display_name: tango.berlin
+      url: https://www.facebook.com/groups/tango.berlin/
+      adapter: fb-group
+      trusted: true
+      priority: normal               # Booker flagged "dormant" (6d since last event)
+      check_interval_days: 21        # Slower cadence — events_synced=0 historically
+      booker_score: 7.80
+      events_synced_historical: 0
+      events_produced_historical: 8
+
+    - name: san-diego-tango
+      group_id: sandiegotango
+      display_name: San Diego Tango Group
+      url: https://www.facebook.com/groups/sandiegotango/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 7.00
+      events_synced_historical: 0
+      events_produced_historical: 9
+
+    - name: tango-events-los-angeles
+      group_id: "751262302928194"
+      display_name: Tango Events Los Angeles
+      url: https://www.facebook.com/groups/751262302928194/
+      adapter: fb-group
+      trusted: true
+      priority: high
+      check_interval_days: 14
+      booker_score: 6.83
+      events_synced_historical: 0
+      events_produced_historical: 9
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEFERRED — post-M1 expansion candidates (not loaded; documented for traceability)
+# ─────────────────────────────────────────────────────────────────────────────
+# 83 MAYBE-tier FB groups from Booker's 2026-04-24 CSV require manual triage
+# before inheriting. See Collab/handoffs/narvest/m1-group-inheritance-candidates.csv.
+# Manual-triage pass scheduled for post-M1; expected outcome ~30-50 groups inheriting.
+#
+# Top deferred candidates (highest Booker score, for reference):
+#   tango-in-florida (14.83)
+#   chicago-tango-lovers (12.00)
+#   argentine-tango-events-worldwide (11.27)
+#   tucson-tango (10.00)
+#   bos-tango (8.00)
+#   melbourne-argentine-tango (8.00)
+#
+# Other M1 web sources documented in ARCHITECTURE §2 but not yet wired:
+#   - dc-capital-tangueros
+#   - The Events Calendar (TEC) WP REST sites (multi-site, wiring TBD)

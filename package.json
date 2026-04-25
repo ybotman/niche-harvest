@@ -1,0 +1,22 @@
+{
+  "name": "niche-harvest",
+  "version": "0.1.0",
+  "description": "Self-contained autonomous per-niche event calendar pipeline. One niche = one process = one persona.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "smoke:mock-fb": "node --experimental-strip-types test/mock-fb/smoke-test.ts"
+  },
+  "dependencies": {
+    "mongodb": "^6.20.0",
+    "rrule": "^2.8.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

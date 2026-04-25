@@ -1,0 +1,31 @@
+# niche-harvest gitignore
+
+# Runtime data — per-niche SQLite, geocode caches, scrape artifacts, watchdog state.
+# All ephemeral; never committed.
+data/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Build scratch (M3 deferred)
+build-workspace/*
+!build-workspace/.gitkeep
+
+# Logs
+*.log

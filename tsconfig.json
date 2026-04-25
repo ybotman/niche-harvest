@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+
+    "rootDir": ".",
+    "baseUrl": "."
+  },
+  "include": [
+    "core/**/*.ts",
+    "niches/**/*.ts",
+    "test/**/*.ts",
+    "deploy/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "data",
+    "build-workspace",
+    "test/mock-fb"
+  ]
+}
