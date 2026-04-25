@@ -95,6 +95,8 @@ interface LoadReport {
     skipped_venue_not_geocoded: number;
     skipped_no_dates: number;
     counts: ReturnType<DryRunLoader["counts"]>;
+    /** Explicit reason when organizers_attempted=0 (AIDI 2026-04-25). */
+    organizer_skip_reason?: string;
   };
   total_state: {
     raw_events_total: number;
@@ -326,6 +328,26 @@ async function main(): Promise<void> {
   const qfThisBatch: Record<string, number> = { ...totalState.quality_flags_by_reason };
 
   const counts = loader.counts();
+
+  // ─── Organizer-skip explicit reason (AIDI 2026-04-25 follow-up) ───
+  // When 0 organizers attempted but the source DOES have organizer signal,
+  // log explicitly why — not silent. Distinguishes "source has no
+  // organizers" from "all organizer-bearing events were filtered out".
+  const orgBearingTotal = (db
+    .prepare(`
+      SELECT COUNT(*) AS n FROM raw_events
+      WHERE raw_organizer_text IS NOT NULL AND raw_organizer_text != ''
+    `)
+    .get() as { n: number }).n;
+  let organizerSkipReason: string | undefined;
+  if (counts.organizers_attempted === 0 && orgBearingTotal > 0) {
+    organizerSkipReason =
+      `0_organizers_attempted: ${orgBearingTotal} organizer-bearing raw_events ` +
+      `but all were excluded upstream (likely at geocode gate or classify gate)`;
+  } else if (counts.organizers_attempted === 0 && orgBearingTotal === 0) {
+    organizerSkipReason = "0_organizers: source has no organizer signal in any raw_event";
+  }
+
   log.info("load done", {
     enriched_events_seen: rows.length,
     eligible_for_load: eligible,
@@ -333,6 +355,7 @@ async function main(): Promise<void> {
     skipped_venue_not_geocoded: skippedVenueNotGeocoded,
     skipped_no_dates: skippedNoDates,
     counts,
+    ...(organizerSkipReason ? { organizer_skip_reason: organizerSkipReason } : {}),
   });
 
   // ─── Build report ───
