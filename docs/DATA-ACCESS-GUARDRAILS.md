@@ -48,24 +48,27 @@ Discovery-side writes can still go wrong: bad geocode, wrong category, duplicate
 
 These cannot be opted out of by an operator. Violation requires a code change, which goes through review.
 
-| # | Rule | Where enforced |
-|---|------|----------------|
-| H1 | Discovery writers ONLY write `isDiscovered: true` on events/venues/organizers. Never `false`, never updating an `isDiscovered=false` row. | `core/loader/denorm.ts` — both base field and never-update query filter `{isDiscovered: true}` on UPDATE/UPSERT operations |
-| H2 | Discovery writers NEVER write to `mastered_*` collections. AutoMaster (BE) is the sole writer. | Loader interface has no method to write mastered_*; `mongo-direct.ts` constructor inspects collection allowlist on connect. Typecheck-level guarantee (no method = no call). |
-| H3 | Fingerprint dedup queries filter `{isDiscovered: true}`. Discovery scripts never collide with user-entered events even by accident. | `core/store.ts` venue/organizer/event lookup queries; `core/loader/mongo-direct.ts` dedup pre-insert query |
-| H4 | Connection strings come ONLY from env vars. Never hardcoded; never read from git-tracked files at runtime. | `core/loader/mongo-direct.ts` reads `process.env.MONGODB_URI_TEST/PROD`; refuses to construct without it |
-| H5 | `MongoDirectLoader` constructor refuses without explicit `confirmTestOnly: true` opt-in. PROD construction requires a separate `confirmProdAuthorized: true` opt-in (NOT YET IMPLEMENTED — gated by first PROD-cycle agreement) | `core/loader/mongo-direct.ts` constructor |
-| H6 | `--dry-run` MUST be the default mode for any new CLI command. `--live` is opt-in, fails-fast without explicit env var (e.g., `NICHE_HARVEST_LIVE=1`). | All `core/cli/*.ts` entrypoints |
-| H7 | Country bounds: geocoder rejects results outside `niche.yaml.geocode.trusted_country_codes`. No fallback substitution per LOADER-CONTRACT no-fallback rule. | `core/geocoder/nominatim.ts` evaluateResponse() |
-| H8 | RRULE validation at classify time; malformed → `quality_flag: rrule_invalid`, event excluded. | `core/classify.ts` (Phase 1.5+) |
-| H9 | Anti-recurrence guard: events with duration > 24h cannot be recurring. Both `isRepeating` + `recurrenceRule` force-nulled at write time (mirrors BE behavior). | `core/loader/mongo-direct.ts` insertEvent |
-| H10 | All writes namespaced by `discoverySource: "niche-harvest"` (or per-pipeline string). Cleanup is always `{appId, discoverySource}`-bounded. | `core/loader/denorm.ts` populates field on every doc |
+**Status column** (per Toby v2 ask): `enforced` = wired in code today; `proposed` = doc says yes, code doesn't yet; `partial` = wired but with known gap.
+
+| # | Rule | Where enforced | Status |
+|---|------|----------------|--------|
+| H1 | Discovery writers ONLY write `isDiscovered: true` on events/venues/organizers. Never `false`, never updating an `isDiscovered=false` row. | `core/loader/denorm.ts` sets field; UPDATE queries must filter `{isDiscovered: true}` (NOT YET in `mongo-direct.ts`) | **partial** — write field=true ✅; UPDATE filter not yet wired |
+| H2 | Discovery writers NEVER write to `mastered_*` collections. AutoMaster (BE) is the sole writer. | `Loader` interface has no method to write mastered_*; nothing to call. Constructor-time collection allowlist check is a belt-and-braces add. | **enforced** by interface absence; allowlist add **proposed** |
+| H3 | Fingerprint dedup queries filter `{isDiscovered: true}`. Discovery scripts never collide with user-entered events even by accident. | `core/store.ts` SQLite ✅; Mongo-side dedup query in `mongo-direct.ts insertEvent` | **proposed** — Mongo dedup query needs the filter added before --live |
+| H4 | Connection strings come ONLY from env vars. Never hardcoded; never read from git-tracked files at runtime. | `core/loader/mongo-direct.ts` reads `process.env.MONGODB_URI_TEST/PROD`; refuses to construct without it | **enforced** ✅ |
+| H5 | `MongoDirectLoader` constructor refuses without explicit `confirmTestOnly: true` opt-in. PROD construction requires a separate `confirmProdAuthorized: true` opt-in. | `core/loader/mongo-direct.ts` constructor | **partial** — TEST opt-in ✅; PROD opt-in **proposed** (gated by first PROD-cycle agreement) |
+| H6 | `--dry-run` is the DEFAULT for `load`. `--live` MUST be opt-in via explicit flag + per-run auth. | `core/cli/load.ts` | **enforced** ✅ today (no `--live` flag exists yet); future CLIs MUST follow pattern |
+| H7 | Country bounds: geocoder rejects results outside `niche.yaml.geocode.trusted_country_codes`. No fallback substitution. | `core/geocoder/nominatim.ts` evaluateResponse() | **enforced** ✅ |
+| H8 | RRULE validation at classify time; malformed → `quality_flag: rrule_invalid`, event excluded. | `core/classify.ts` | **proposed** — needs npm `rrule` validation call wired (today the source RRULE is pass-through unvalidated) |
+| H9 | Anti-recurrence guard: events with duration > 24h cannot be recurring. Both `isRepeating` + `recurrenceRule` force-nulled at write time. | `core/loader/mongo-direct.ts` insertEvent | **enforced** ✅ |
+| H10 | All writes namespaced by `discoverySource: "niche-harvest"`. | `core/loader/denorm.ts` populates field on every doc | **enforced** ✅ |
+| **H11** | **Every write tagged with `nh_batch_id` (UUID per cycle). Rollback = `db.{collection}.deleteMany({nh_batch_id: <id>})`. One-batch-microbatch granularity.** | `core/loader/denorm.ts` adds field; loader CLI generates UUID at run start; report records the batch_id at the top so rollback is trivial. **Updates** (rare; future): need before-state capture in `nh_batch_audit` collection — open question Q7 below. | **proposed** — Toby 2026-04-25 add; concrete write-rollback control |
 
 ---
 
 ## 4. SOFT GUIDELINES (process-enforced; team-agreed)
 
-These rely on team discipline. Violation goes to retrospective; repeated violation triggers code-enforcement promotion.
+These rely on team discipline. The team is honest (Toby 2026-04-25); we keep mistakes for learning; sanity-checks for status updates are the right scope of soft control. Violation goes to retrospective; repeated violation triggers code-enforcement promotion.
 
 | # | Guideline | Why |
 |---|-----------|-----|
@@ -236,6 +239,7 @@ When all signed → state: `agreed`; promote to `MasterCalendar/docs/DATA-ACCESS
 4. **GUIDELINE S5** — sandbox sqlsvr for new auto-discovery queue. Toby mentioned this; what's the actual sandbox? In-memory SQLite per-session? A separate Mongo DB? Defer until M2 design.
 5. **GUIDELINE S6** — automated script-checker target language: TypeScript static analysis, or runtime sandbox-and-observe?
 6. **HITL G8** — operator-inspect-before-live: how is this enforced when a `--live` invocation is automated (cron-scheduled scheduler in M1 Phase 7+)? Does scheduler always require dry-run+human-ack, or can a fully-trusted source bypass after N clean cycles?
+7. **H11 update-rollback** — `nh_batch_id` makes INSERT rollback trivial (deleteMany by batch). Updates are rare but real (e.g., enriching an existing event with newly-resolved venue lat/lng). Options: (a) capture before-state into `nh_batch_audit` collection at update time (small overhead, full rollback); (b) treat updates as "new batch tagged + soft-delete-old" (pure-insert pattern, larger storage); (c) defer updates to a separate code path with explicit per-update auth (most conservative). Toby 2026-04-25 flagged as open. Lean toward (a); confirm with team.
 
 ---
 
