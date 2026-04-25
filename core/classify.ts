@@ -91,6 +91,24 @@ export interface ClassifyResult {
   skip_reason: SkipReason | null;
   /** Internal trace of which keywords fired which slot — for debugging */
   trace: { slot: string; matched: string[] }[];
+  /**
+   * Duration validation per LOADER-CONTRACT §7.2 hard rules. null = OK;
+   * non-null = violation detail (machine-readable kind + message). Enrich
+   * pipeline writes a `duration_violation` quality_flag and excludes from
+   * load when this is non-null. Set even when category is null/Unknown
+   * (max-duration rule applies regardless of classification).
+   */
+  duration_violation: DurationViolation | null;
+  /** Computed duration in hours; null if dates not parseable. */
+  duration_hours: number | null;
+}
+
+export interface DurationViolation {
+  kind:
+    | "short_with_long_duration"   // SHORT category, duration >= 24h
+    | "long_with_short_duration"   // LONG category, duration < 24h
+    | "exceeds_max_duration";      // duration > 168h regardless of category
+  detail: string;
 }
 
 /**
@@ -115,25 +133,38 @@ export function classify(
 ): ClassifyResult {
   const haystack = combineText(ev).toLowerCase();
   const trace: { slot: string; matched: string[] }[] = [];
+  const durationHours = computeDurationHours(ev);
 
-  // Build keyword -> CategoryConfig map from niche.yaml
   const cats = niche.taxonomy.categories;
   const longCats = cats.filter((c) => c.duration_group === "LONG");
   const shortCats = cats.filter((c) => c.duration_group === "SHORT");
   const neutralCats = cats.filter((c) => c.duration_group === "NEUTRAL");
+
+  // Helper: build full result with shared duration_hours + duration_violation.
+  const make = (
+    categoryFirst: string | null,
+    skipReason: SkipReason | null,
+  ): ClassifyResult => {
+    const winner = categoryFirst
+      ? cats.find((c) => c.name === categoryFirst) ?? null
+      : null;
+    return {
+      category_first: categoryFirst,
+      category_second: null,
+      category_third: null,
+      skip_reason: skipReason,
+      trace,
+      duration_hours: durationHours,
+      duration_violation: validateDuration(winner, durationHours),
+    };
+  };
 
   // ─── LONG precedence ───
   const longMatched = matchCategoriesByName(haystack, longCats);
   if (longMatched.length > 0) {
     trace.push({ slot: "LONG", matched: longMatched.map((c) => c.name) });
     const winner = longMatched[0]!;
-    return {
-      category_first: winner.name,
-      category_second: null,
-      category_third: null,
-      skip_reason: deriveSkipReason(winner, false),
-      trace,
-    };
+    return make(winner.name, deriveSkipReason(winner, false));
   }
 
   // ─── SHORT precedence: Milonga > Practica > Class ───
@@ -142,15 +173,8 @@ export function classify(
     trace.push({ slot: "SHORT", matched: shortMatched.map((c) => c.name) });
     const ordered = orderShort(shortMatched);
     const winner = ordered[0]!;
-    const isClassOnly =
-      winner.name === "Class" && ordered.length === 1;
-    return {
-      category_first: winner.name,
-      category_second: null,
-      category_third: null,
-      skip_reason: deriveSkipReason(winner, isClassOnly),
-      trace,
-    };
+    const isClassOnly = winner.name === "Class" && ordered.length === 1;
+    return make(winner.name, deriveSkipReason(winner, isClassOnly));
   }
 
   // ─── NEUTRAL precedence: Performance > Trip > Unknown ───
@@ -159,34 +183,66 @@ export function classify(
     trace.push({ slot: "NEUTRAL", matched: neutralMatched.map((c) => c.name) });
     const ordered = orderNeutral(neutralMatched);
     const winner = ordered[0]!;
-    return {
-      category_first: winner.name,
-      category_second: null,
-      category_third: null,
-      skip_reason: deriveSkipReason(winner, false),
-      trace,
-    };
+    return make(winner.name, deriveSkipReason(winner, false));
   }
 
-  // Default: Unknown if there's an Unknown in the taxonomy; null otherwise.
+  // Default: Unknown if defined in the taxonomy; null otherwise.
   const unknown = cats.find((c) => c.name === "Unknown");
   if (unknown) {
     trace.push({ slot: "DEFAULT", matched: [] });
+    return make("Unknown", "skip_unknown");
+  }
+  return make(null, null);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Duration validation per LOADER-CONTRACT §7.2 hard rules
+// ─────────────────────────────────────────────────────────────────────────
+
+const HOURS_24 = 24;
+const HOURS_168 = 168; // 7 days, max event duration
+
+function computeDurationHours(ev: RawEvent): number | null {
+  if (!ev.start_dt_iso || !ev.end_dt_iso) return null;
+  const start = Date.parse(ev.start_dt_iso);
+  const end = Date.parse(ev.end_dt_iso);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const ms = end - start;
+  if (ms <= 0) return null;
+  return ms / 3_600_000;
+}
+
+function validateDuration(
+  cat: CategoryConfig | null,
+  durationHours: number | null,
+): DurationViolation | null {
+  if (durationHours === null) return null;
+
+  // Max-duration rule applies regardless of category.
+  if (durationHours > HOURS_168) {
     return {
-      category_first: "Unknown",
-      category_second: null,
-      category_third: null,
-      skip_reason: "skip_unknown",
-      trace,
+      kind: "exceeds_max_duration",
+      detail: `duration ${durationHours.toFixed(1)}h > ${HOURS_168}h max`,
     };
   }
-  return {
-    category_first: null,
-    category_second: null,
-    category_third: null,
-    skip_reason: null,
-    trace,
-  };
+
+  if (!cat) return null; // no category → only max-duration check applies
+
+  if (cat.duration_group === "SHORT" && durationHours >= HOURS_24) {
+    return {
+      kind: "short_with_long_duration",
+      detail: `SHORT category '${cat.name}' but duration ${durationHours.toFixed(1)}h >= ${HOURS_24}h`,
+    };
+  }
+
+  if (cat.duration_group === "LONG" && durationHours < HOURS_24) {
+    return {
+      kind: "long_with_short_duration",
+      detail: `LONG category '${cat.name}' but duration ${durationHours.toFixed(1)}h < ${HOURS_24}h`,
+    };
+  }
+
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

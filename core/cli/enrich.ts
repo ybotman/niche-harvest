@@ -29,6 +29,7 @@ import { openStore } from "../store.ts";
 import { fingerprintVenue } from "../fingerprint.ts";
 import { identityCheck, classify } from "../classify.ts";
 import { NominatimGeocoder } from "../geocoder/nominatim.ts";
+import { parseLocation } from "../geocoder/parse-location.ts";
 import { PATHS } from "../types.ts";
 import type { RawEvent } from "../types.ts";
 
@@ -73,18 +74,39 @@ interface EnrichSummary {
   generated_at: string;
   dry_run: boolean;
   max_geocodes: number;
-  totals: {
+  /** What happened in THIS invocation (delta). Zeros when nothing pending. */
+  this_run: {
     raw_events_pending: number;
     identity_pass: number;
     identity_skip: number;
     classify_loadable: number;
     classify_skipped: number;
+    duration_violations: number;
     by_category: Record<string, number>;
     by_skip_reason: Record<string, number>;
+    by_duration_violation_kind: Record<string, number>;
     unique_venues: number;
     venues_geocoded: number;
     venues_geocode_failed: number;
     venues_geocode_skipped_cap: number;
+  };
+  /** Cumulative state queried from SQLite at end of run. ALWAYS populated
+   * regardless of whether this run processed anything (AIDI 2026-04-25
+   * Phase 1 review fix — prevents zero-totals confusion on re-runs). */
+  total_state: {
+    raw_events_total: number;
+    raw_events_by_status: Record<string, number>;
+    venues_total: number;
+    venues_by_geocode_status: Record<string, number>;
+    quality_flags_total: number;
+    quality_flags_by_reason: Record<string, number>;
+    /**
+     * niche-harvest's strictest "ready to go to BE / would be loadable"
+     * count: raw_events status='enriched' AND tied venue is geocoded.
+     * Mastered chain (city/country names from BE AutoMaster) is Phase 2
+     * loader's concern; this count is the Phase 1 ceiling.
+     */
+    loadable_for_phase_2: number;
   };
 }
 
@@ -141,20 +163,33 @@ async function main(): Promise<void> {
     generated_at: new Date().toISOString(),
     dry_run: opts.dryRun,
     max_geocodes: opts.maxGeocodes,
-    totals: {
+    this_run: {
       raw_events_pending: rows.length,
       identity_pass: 0,
       identity_skip: 0,
       classify_loadable: 0,
       classify_skipped: 0,
+      duration_violations: 0,
       by_category: {},
       by_skip_reason: {},
+      by_duration_violation_kind: {},
       unique_venues: 0,
       venues_geocoded: 0,
       venues_geocode_failed: 0,
       venues_geocode_skipped_cap: 0,
     },
+    total_state: {
+      raw_events_total: 0,
+      raw_events_by_status: {},
+      venues_total: 0,
+      venues_by_geocode_status: {},
+      quality_flags_total: 0,
+      quality_flags_by_reason: {},
+      loadable_for_phase_2: 0,
+    },
   };
+  // alias to keep the existing per-event accumulation lines compact
+  const totals = summary.this_run;
 
   log.info("enrich start", {
     raw_events_pending: rows.length,
@@ -178,10 +213,33 @@ async function main(): Promise<void> {
   `);
 
   for (const row of rows) {
+    // raw_json is the adapter's source-shaped payload. Different adapters
+    // serialize different schemas: iCal stores IcalEvent (dtstart/dtend
+    // keys); future FB adapter will store FB GraphQL shape; etc. We
+    // extract dates by checking BOTH the RawEvent shape (start_dt_iso)
+    // AND known adapter shapes (iCal dtstart). When this list grows,
+    // promote start_dt/end_dt to dedicated raw_events columns.
+    let parsedJson: {
+      start_dt_iso?: string;
+      end_dt_iso?: string;
+      dtstart?: string;
+      dtend?: string;
+    } = {};
+    if (row.raw_json) {
+      try {
+        parsedJson = JSON.parse(row.raw_json) as typeof parsedJson;
+      } catch {
+        // tolerated; classifier proceeds without dates
+      }
+    }
+    const startIso = parsedJson.start_dt_iso ?? parsedJson.dtstart;
+    const endIso = parsedJson.end_dt_iso ?? parsedJson.dtend;
     const ev: RawEvent = {
       source_event_id: String(row.id),
       raw_title: row.raw_title,
       ...(row.raw_date_text !== null ? { raw_date_text: row.raw_date_text } : {}),
+      ...(startIso ? { start_dt_iso: startIso } : {}),
+      ...(endIso ? { end_dt_iso: endIso } : {}),
       ...(row.raw_location_text !== null ? { raw_location_text: row.raw_location_text } : {}),
       ...(row.raw_description !== null ? { raw_description: row.raw_description } : {}),
       ...(row.raw_organizer_text !== null ? { raw_organizer_text: row.raw_organizer_text } : {}),
@@ -192,7 +250,7 @@ async function main(): Promise<void> {
     if (row.trusted !== 1) {
       const id = identityCheck(ev, niche);
       if (!id.passed) {
-        summary.totals.identity_skip += 1;
+        totals.identity_skip += 1;
         if (!opts.dryRun) {
           insertQualityFlag.run(row.id, row.source_id, "venue_invalid", id.reason ?? null);
           updateRawStatus.run("skipped", new Date().toISOString(), row.id);
@@ -200,22 +258,22 @@ async function main(): Promise<void> {
         continue;
       }
     }
-    summary.totals.identity_pass += 1;
+    totals.identity_pass += 1;
 
-    // ─── Classify ───
+    // ─── Classify (category + duration validation) ───
     const cl = classify(ev, niche);
     if (cl.category_first) {
-      summary.totals.by_category[cl.category_first] =
-        (summary.totals.by_category[cl.category_first] ?? 0) + 1;
+      totals.by_category[cl.category_first] =
+        (totals.by_category[cl.category_first] ?? 0) + 1;
     }
     if (cl.skip_reason) {
       // Class-only is gated by niche.loader.load_classes (LOADER-CONTRACT §7.1.1)
       const isClassOnlyOptedIn =
         cl.skip_reason === "skip_class_only" && niche.loader.load_classes;
       if (!isClassOnlyOptedIn) {
-        summary.totals.classify_skipped += 1;
-        summary.totals.by_skip_reason[cl.skip_reason] =
-          (summary.totals.by_skip_reason[cl.skip_reason] ?? 0) + 1;
+        totals.classify_skipped += 1;
+        totals.by_skip_reason[cl.skip_reason] =
+          (totals.by_skip_reason[cl.skip_reason] ?? 0) + 1;
         if (!opts.dryRun) {
           insertQualityFlag.run(row.id, row.source_id, cl.skip_reason, null);
           updateRawStatus.run("skipped", new Date().toISOString(), row.id);
@@ -223,7 +281,28 @@ async function main(): Promise<void> {
         continue;
       }
     }
-    summary.totals.classify_loadable += 1;
+
+    // ─── Duration-violation gate (LOADER-CONTRACT §7.2 hard rules) ───
+    // SHORT category with >=24h duration, LONG with <24h, or any >168h
+    // gets a duration_violation quality_flag and exits the loadable set.
+    // Caught Porter's CALBEAF-141 cases (Carolina+Ricardo, Lya Elcagu in SLC).
+    if (cl.duration_violation) {
+      totals.duration_violations += 1;
+      totals.by_duration_violation_kind[cl.duration_violation.kind] =
+        (totals.by_duration_violation_kind[cl.duration_violation.kind] ?? 0) + 1;
+      if (!opts.dryRun) {
+        insertQualityFlag.run(
+          row.id,
+          row.source_id,
+          "duration_violation",
+          cl.duration_violation.detail,
+        );
+        updateRawStatus.run("skipped", new Date().toISOString(), row.id);
+      }
+      continue;
+    }
+
+    totals.classify_loadable += 1;
 
     // ─── Queue venue for geocoding pass ───
     if (row.raw_location_text) {
@@ -242,15 +321,15 @@ async function main(): Promise<void> {
     }
   }
 
-  summary.totals.unique_venues = venueQueue.size;
+  totals.unique_venues = venueQueue.size;
   log.info("identity+classify done", {
-    identity_pass: summary.totals.identity_pass,
-    identity_skip: summary.totals.identity_skip,
-    classify_loadable: summary.totals.classify_loadable,
-    classify_skipped: summary.totals.classify_skipped,
-    unique_venues: summary.totals.unique_venues,
-    by_category: summary.totals.by_category,
-    by_skip_reason: summary.totals.by_skip_reason,
+    identity_pass: totals.identity_pass,
+    identity_skip: totals.identity_skip,
+    classify_loadable: totals.classify_loadable,
+    classify_skipped: totals.classify_skipped,
+    unique_venues: totals.unique_venues,
+    by_category: totals.by_category,
+    by_skip_reason: totals.by_skip_reason,
   });
 
   // ─── Optional pass 1.5: re-queue venues with geocode_status='failed' ───
@@ -280,7 +359,7 @@ async function main(): Promise<void> {
       newly_requeued: requeued,
       queue_size_after: venueQueue.size,
     });
-    summary.totals.unique_venues = venueQueue.size;
+    totals.unique_venues = venueQueue.size;
   }
 
   // ─── Pass 2: Geocode unique venues (rate-limited; cap by --max-geocodes) ───
@@ -303,41 +382,56 @@ async function main(): Promise<void> {
   let geocodeCalls = 0;
   for (const v of venueQueue.values()) {
     if (geocodeCalls >= opts.maxGeocodes) {
-      summary.totals.venues_geocode_skipped_cap += 1;
+      totals.venues_geocode_skipped_cap += 1;
       continue;
     }
+    // ─── Structured-query geocoding (AIDI 2026-04-25 root-cause fix) ───
+    // Parse the location string into {venue?, address, city, state, country}
+    // and hand Nominatim a structured query (address+city+state+country),
+    // skipping the venue prefix that confuses Nominatim's free-text parser.
+    // Replaces the earlier venue-strip retry heuristic — this is what
+    // Harvey's gcal-harvest does to get 90%+ rates on the same feeds.
+    const parsed = parseLocation(v.venue_text);
     geocodeCalls += 1;
-    let result = await geocoder.geocode({ text: v.venue_text });
+    let result = await geocoder.geocode({
+      text: parsed.geocode_query,
+      ...(parsed.country_iso ? { countryHint: parsed.country_iso } : {}),
+      ...(parsed.city ? { cityHint: parsed.city } : {}),
+      ...(parsed.state ? { stateHint: parsed.state } : {}),
+    });
 
-    // ─── Fallback: strip leading "VenueName, " prefix and retry ───
-    // Nominatim's free-text geocoder often fails on "Studio Name, 123 Main St,
-    // City, ST" because it tries to match the leading venue name as a place.
-    // The address portion alone usually resolves fine. We attempt the stripped
-    // form ONLY if the original failed AND the comma is in a reasonable
-    // position (avoids stripping useful tokens like "Suite 6, ..." mid-address).
-    if (result.status !== "geocoded") {
-      const commaIdx = v.venue_text.indexOf(",");
-      // Heuristic: strip if the first token looks like a venue name (len 4-50,
-      // contains a letter, no digits — "DF Dance Studio" yes, "1751 W Alexander" no).
-      if (commaIdx > 3 && commaIdx < 50) {
-        const prefix = v.venue_text.slice(0, commaIdx).trim();
-        const looksLikeVenueName =
-          /[A-Za-z]/.test(prefix) && !/^\d/.test(prefix);
-        if (looksLikeVenueName) {
-          const stripped = v.venue_text.slice(commaIdx + 1).trim();
-          if (stripped.length > 0) {
-            geocodeCalls += 1;
-            const retry = await geocoder.geocode({ text: stripped });
-            if (retry.status === "geocoded") {
-              result = retry;
-            }
-          }
-        }
+    // Fallback 1: venue_name + city + state — POI/landmark resolution.
+    // Harvey's gcal-harvest pattern: SLC grid-style addresses ("1321 E
+    // 3300 S") resolve poorly as addresses but well as POIs ("DF Dance
+    // Studio, Salt Lake City, UT"). Try this BEFORE raw_text because
+    // it's structurally cleaner.
+    if (result.status !== "geocoded" && parsed.venue_name && parsed.city) {
+      const poiQuery = [parsed.venue_name, parsed.city, parsed.state]
+        .filter((p): p is string => Boolean(p))
+        .join(", ");
+      geocodeCalls += 1;
+      const poiRetry = await geocoder.geocode({
+        text: poiQuery,
+        ...(parsed.country_iso ? { countryHint: parsed.country_iso } : {}),
+      });
+      if (poiRetry.status === "geocoded") {
+        result = poiRetry;
+      }
+    }
+
+    // Fallback 2: original raw_text. Catches cases where parser stripped
+    // a token Nominatim actually needed (e.g., descriptive keyword that
+    // disambiguates the location).
+    if (result.status !== "geocoded" && parsed.geocode_query !== parsed.raw_text) {
+      geocodeCalls += 1;
+      const rawRetry = await geocoder.geocode({ text: parsed.raw_text });
+      if (rawRetry.status === "geocoded") {
+        result = rawRetry;
       }
     }
 
     if (result.status === "geocoded") {
-      summary.totals.venues_geocoded += 1;
+      totals.venues_geocoded += 1;
       if (!opts.dryRun) {
         upsertVenue.run(
           v.fingerprint,
@@ -350,7 +444,7 @@ async function main(): Promise<void> {
         );
       }
     } else {
-      summary.totals.venues_geocode_failed += 1;
+      totals.venues_geocode_failed += 1;
       if (!opts.dryRun) {
         upsertVenue.run(
           v.fingerprint,
@@ -378,10 +472,55 @@ async function main(): Promise<void> {
 
   log.info("geocode done", {
     geocode_calls: geocodeCalls,
-    venues_geocoded: summary.totals.venues_geocoded,
-    venues_geocode_failed: summary.totals.venues_geocode_failed,
-    venues_geocode_skipped_cap: summary.totals.venues_geocode_skipped_cap,
+    venues_geocoded: totals.venues_geocoded,
+    venues_geocode_failed: totals.venues_geocode_failed,
+    venues_geocode_skipped_cap: totals.venues_geocode_skipped_cap,
   });
+
+  // ─── Cumulative state query (always populated; AIDI 2026-04-25 fix) ───
+  // Lets the artifact reader know the niche's current standing regardless
+  // of whether THIS run processed anything.
+  const reByStatus = db
+    .prepare(`SELECT status, COUNT(*) AS n FROM raw_events GROUP BY status`)
+    .all() as unknown as { status: string; n: number }[];
+  for (const r of reByStatus) {
+    summary.total_state.raw_events_total += r.n;
+    summary.total_state.raw_events_by_status[r.status] = r.n;
+  }
+  const venByStatus = db
+    .prepare(`SELECT geocode_status, COUNT(*) AS n FROM venues GROUP BY geocode_status`)
+    .all() as unknown as { geocode_status: string; n: number }[];
+  for (const r of venByStatus) {
+    summary.total_state.venues_total += r.n;
+    summary.total_state.venues_by_geocode_status[r.geocode_status] = r.n;
+  }
+  const qfByReason = db
+    .prepare(`SELECT reason, COUNT(*) AS n FROM quality_flags GROUP BY reason`)
+    .all() as unknown as { reason: string; n: number }[];
+  for (const r of qfByReason) {
+    summary.total_state.quality_flags_total += r.n;
+    summary.total_state.quality_flags_by_reason[r.reason] = r.n;
+  }
+  // loadable_for_phase_2: enriched raw_events with a geocoded venue.
+  // Joins raw_events → venues by venue_text matched on fingerprint.
+  // (Phase 1 store doesn't yet link raw_event → venue_id; we approximate
+  // by the venue fingerprint being in the geocoded set. This will sharpen
+  // when Phase 2 loader writes events table with venue_id FK.)
+  const phase2 = db
+    .prepare(`
+      SELECT COUNT(*) AS n
+      FROM raw_events re
+      WHERE re.status = 'enriched'
+        AND EXISTS (
+          SELECT 1 FROM venues v
+          WHERE v.geocode_status = 'geocoded'
+            AND v.name = re.raw_location_text
+        )
+    `)
+    .get() as unknown as { n: number };
+  summary.total_state.loadable_for_phase_2 = phase2.n;
+
+  log.info("total_state computed", summary.total_state);
 
   // ─── Emit JSON enrich-summary ───
   const today = new Date().toISOString().slice(0, 10);
