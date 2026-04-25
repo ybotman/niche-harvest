@@ -49,6 +49,35 @@ const US_STATES: ReadonlySet<string> = new Set([
   "DC",
 ]);
 
+// Full-name → 2-letter map for full-name state references in source text.
+// Catches "Utah" appearing where the parser otherwise treats it as city.
+const US_STATE_NAMES: Record<string, string> = {
+  "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+  "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+  "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+  "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+  "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+  "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+  "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+  "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+  "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+  "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+  "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+  "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+  "wisconsin": "WI", "wyoming": "WY", "district of columbia": "DC",
+};
+
+// City alias normalization — maps source-text variants to canonical city names
+// so dedup actually merges them. Add aliases as new niches surface them.
+const CITY_ALIASES: Record<string, string> = {
+  "slc": "Salt Lake City",
+  "salt lake": "Salt Lake City",  // shorthand seen in slc-wasatch
+  "ny": "New York",
+  "nyc": "New York",
+  "la": "Los Angeles",
+  "sf": "San Francisco",
+};
+
 export interface ParsedLocation {
   venue_name?: string;
   address?: string;
@@ -68,7 +97,23 @@ export interface ParsedLocation {
   raw_text: string;
 }
 
-export function parseLocation(text: string): ParsedLocation {
+/**
+ * Per-source location defaults (Harvey's gcal-harvest pattern). When the
+ * source feed is geographically scoped (e.g. slc-wasatch is a Salt Lake
+ * Tango calendar), defaults fill in fields the parser can't extract.
+ * Not a no-fallback violation — the source is genuinely scoped to that
+ * geography; the defaults reflect source-level truth, not synthesis.
+ */
+export interface LocationDefaults {
+  city?: string;
+  state?: string;
+  country?: string;
+}
+
+export function parseLocation(
+  text: string,
+  defaults: LocationDefaults = {},
+): ParsedLocation {
   const raw = text.trim();
   // Split on commas; trim each part. ICS LOCATION strings ARE escaped
   // commas → "\\," and the iCal adapter unescapes them, so by the time
@@ -96,6 +141,8 @@ export function parseLocation(text: string): ParsedLocation {
   }
 
   // ─── State + zip (last token, looks like "UT 84106" or "NY 10001-1234") ───
+  // Also accepts full state names ("Utah", "Salt Lake City, UT 84106, Utah")
+  // — when source uses full name instead of 2-letter code, parser normalizes.
   if (remaining.length > 0) {
     const last = remaining[remaining.length - 1]!;
     const stateZipMatch = last.match(/^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
@@ -103,6 +150,14 @@ export function parseLocation(text: string): ParsedLocation {
       const stateCode = stateZipMatch[1]!.toUpperCase();
       if (US_STATES.has(stateCode)) {
         state = stateCode;
+        if (!country_iso) country_iso = "US";
+        remaining.pop();
+      }
+    } else {
+      // Full state name? "Utah" → "UT", etc.
+      const fullStateMatch = US_STATE_NAMES[last.toLowerCase()];
+      if (fullStateMatch) {
+        state = fullStateMatch;
         if (!country_iso) country_iso = "US";
         remaining.pop();
       }
@@ -122,7 +177,14 @@ export function parseLocation(text: string): ParsedLocation {
     const looksLikeCity =
       /^[A-Za-z]/.test(lastToken) && !/\d/.test(lastToken);
     if (looksLikeCity) {
-      city = lastToken;
+      // Strip parenthetical content ("Midvale (old town)" → "Midvale").
+      // Common in source text where operators tag area / building info.
+      let cityCandidate = lastToken.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      // Apply alias map (SLC → Salt Lake City, etc.) BEFORE assignment
+      // so dedup keys match feed defaults / canonical forms.
+      const aliasMatch = CITY_ALIASES[cityCandidate.toLowerCase()];
+      if (aliasMatch) cityCandidate = aliasMatch;
+      city = cityCandidate;
       remaining.pop();
     }
     // If last token has digits, leave it in remaining as part of address.
@@ -151,6 +213,15 @@ export function parseLocation(text: string): ParsedLocation {
       address = remaining.join(", ");
     }
   }
+
+  // ─── Apply defaults for fields not extracted from text ───
+  // Critical for venue dedup: when the parser can't extract a city,
+  // using the feed's default city collapses many "no-city" venues into
+  // ONE per-feed bucket instead of fragmenting per address-text variant.
+  // (Harvey's gcal-harvest pattern; see harvester/scripts/gcal-harvest.ts:513.)
+  if (!city && defaults.city) city = defaults.city;
+  if (!state && defaults.state) state = defaults.state;
+  if (!country_iso && defaults.country) country_iso = defaults.country;
 
   // ─── Build the structured geocode query ───
   // Skip venue_name to avoid Nominatim trying to match it as a place.

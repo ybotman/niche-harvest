@@ -118,6 +118,19 @@ export interface SourceConfigBase {
   priority: "high" | "normal" | "low" | "dormant";
   check_interval_days: number;
   notes?: string;
+  /**
+   * Per-source location defaults (Harvey's gcal-harvest pattern). When the
+   * source's location text is sparse (no city/state extractable), parser
+   * falls back to these. Use when the feed is geographically scoped — a
+   * Salt Lake tango calendar legitimately defaults to Salt Lake City / UT
+   * without being a "fallback" violation per LOADER no-fallback rule
+   * (the source IS scoped to that geography).
+   */
+  location_default?: {
+    city?: string;
+    state?: string;
+    country?: string;
+  };
 }
 
 export interface IcalSourceConfig extends SourceConfigBase {

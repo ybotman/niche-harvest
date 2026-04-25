@@ -285,6 +285,17 @@ function validateSource(
   if (!VALID_PRIORITY.has(priority)) {
     fail(`${ctx}.priority invalid: ${priority} (expected high|normal|low|dormant)`);
   }
+  // Optional location_default per source (Harvey gcal-harvest pattern;
+  // collapses fragmenting venues when source location text is sparse).
+  let locationDefault: { city?: string; state?: string; country?: string } | undefined;
+  if (src.location_default && typeof src.location_default === "object") {
+    const ld = src.location_default as Record<string, unknown>;
+    locationDefault = {};
+    if (typeof ld.city === "string") locationDefault.city = ld.city;
+    if (typeof ld.state === "string") locationDefault.state = ld.state;
+    if (typeof ld.country === "string") locationDefault.country = ld.country;
+  }
+
   const base = {
     name: requireString(src, `${ctx}.name`, fail),
     url: requireString(src, `${ctx}.url`, fail),
@@ -296,6 +307,7 @@ function validateSource(
       ? { display_name: src.display_name }
       : {}),
     ...(typeof src.notes === "string" ? { notes: src.notes } : {}),
+    ...(locationDefault ? { location_default: locationDefault } : {}),
   };
   if (adapter === "ical") {
     return {

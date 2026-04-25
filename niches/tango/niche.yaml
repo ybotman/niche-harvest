@@ -231,6 +231,16 @@ sources:
       priority: high
       check_interval_days: 3
       timezone_hint: America/Denver
+      # Per-source location defaults (Harvey's gcal-harvest pattern; see
+      # harvester/scripts/gcal-harvest.ts:513). Used by parse-location.ts
+      # when the source's per-event location text can't extract these
+      # fields. NOT a fallback violation per LOADER-CONTRACT no-fallback
+      # rule — this source is GENUINELY scoped to Salt Lake City / UT / US;
+      # the defaults reflect source-level truth, not synthesis.
+      location_default:
+        city: Salt Lake City
+        state: UT
+        country: US
 
   # ───── Web pages ─────
   # Sources: AS-IS-PIPELINE-2026-04-24 inventory + Booker CSV NOT_A_FB_GROUP

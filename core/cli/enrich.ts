@@ -126,6 +126,9 @@ interface RawEventRow {
 interface SourceMeta {
   trusted: number;
   source_name: string;
+  /** Per-source config_json from sources table — carries niche.yaml's
+   *  source entry verbatim (incl. location_default if set). */
+  config_json: string | null;
 }
 
 async function main(): Promise<void> {
@@ -150,7 +153,7 @@ async function main(): Promise<void> {
         re.id, re.source_id, re.raw_title, re.raw_date_text,
         re.raw_location_text, re.raw_description, re.raw_organizer_text,
         re.raw_url, re.raw_json, re.status,
-        s.trusted, s.source_id AS source_name
+        s.trusted, s.source_id AS source_name, s.config_json
       FROM raw_events re
       JOIN sources s ON s.id = re.source_id
       WHERE re.status = 'pending'
@@ -324,7 +327,21 @@ async function main(): Promise<void> {
     // 10 real venues became 101 in slc-wasatch. With this fix, expect
     // venues_total to drop to Harvey's ~10-30 range and geocode rate to climb.
     if (row.raw_location_text) {
-      const parsed = parseLocation(row.raw_location_text);
+      // Per-source location defaults (Harvey gcal-harvest pattern).
+      // niche.yaml's location_default flows through sources.config_json
+      // — when set, parse-location uses these for fields it can't extract
+      // from the location text. Collapses many "no-city" venues into ONE
+      // per-feed bucket instead of fragmenting per address-text variant.
+      let sourceDefaults: { city?: string; state?: string; country?: string } = {};
+      if (row.config_json) {
+        try {
+          const cfg = JSON.parse(row.config_json) as { location_default?: typeof sourceDefaults };
+          if (cfg.location_default) sourceDefaults = cfg.location_default;
+        } catch {
+          // tolerated; parser proceeds without defaults
+        }
+      }
+      const parsed = parseLocation(row.raw_location_text, sourceDefaults);
       // venue_name is null when the text starts with a digit (no venue
       // prefix, just an address); city is null when no commas. Best-effort
       // fallbacks: use first comma-chunk as name when parser returned none;
