@@ -43,6 +43,7 @@ import {
   type VenueRow,
 } from "../loader/denorm.ts";
 import { DryRunLoader } from "../loader/dry-run.ts";
+import { MongoDirectLoader } from "../loader/mongo-direct.ts";
 import {
   warmCategories,
   resolveCategoryId,
@@ -59,6 +60,14 @@ interface LoadOpts {
   categoriesAppId: number;
   appidOverride: number | null;
   noWarmCategories: boolean;
+  /**
+   * AIDI Phase 3 gate item #3: --mongo-verify connects to TEST Mongo
+   * (read-only), captures collection counts BEFORE + AFTER the dry-run,
+   * proves zero writes via diff. Requires MONGODB_URI_TEST env var.
+   * Runs only if Toby has explicitly authorized URI use (the construct
+   * itself enforces confirmTestOnly).
+   */
+  mongoVerify: boolean;
 }
 
 function parseCli(argv: string[]): LoadOpts {
@@ -80,6 +89,7 @@ function parseCli(argv: string[]): LoadOpts {
       ? Number(pickArg(args, "--appid-override"))
       : null,
     noWarmCategories: args.includes("--no-warm-categories"),
+    mongoVerify: args.includes("--mongo-verify"),
   };
 }
 
@@ -104,10 +114,24 @@ function fail(msg: string): never {
   process.exit(2);
 }
 
+interface MongoVerifyReport {
+  status: "skipped" | "verified_zero_writes" | "writes_detected" | "error";
+  uri_present: boolean;
+  collections_checked: string[];
+  counts_before?: Record<string, number>;
+  counts_after?: Record<string, number>;
+  /** Per-collection diff = after - before. Zero across all = verified. */
+  diff?: Record<string, number>;
+  total_diff?: number;
+  error?: string;
+}
+
 interface LoadReport {
   niche: string;
   generated_at: string;
   loader: "dry-run";
+  /** AIDI Phase 3 gate item #3: zero-writes proof via Mongo count diff. */
+  mongo_verify: MongoVerifyReport;
   /** Categories cache-warm status (AIDI Phase 3 gate item #2). */
   categories_cache: {
     status: "warmed" | "skipped" | "failed";
@@ -185,6 +209,58 @@ async function main(): Promise<void> {
 
   const db = openStore(opts.niche);
   const loader = new DryRunLoader();
+
+  // ─── AIDI Phase 3 gate item #3: --mongo-verify ───
+  // Connects to TEST Mongo (read-only), captures collection counts
+  // BEFORE the dry-run, captures AFTER, asserts diff=0. Refuses to
+  // run without MONGODB_URI_TEST env var (Toby URI auth gate).
+  // Constructor's confirmTestOnly defense prevents accidental PROD use.
+  let mongoLoader: MongoDirectLoader | null = null;
+  const mongoVerifyReport: MongoVerifyReport = {
+    status: "skipped",
+    uri_present: false,
+    collections_checked: ["events", "venues", "organizers"],
+  };
+  if (opts.mongoVerify) {
+    const uri = process.env.MONGODB_URI_TEST;
+    mongoVerifyReport.uri_present = Boolean(uri);
+    if (!uri) {
+      mongoVerifyReport.status = "error";
+      mongoVerifyReport.error =
+        "MONGODB_URI_TEST env var not set; --mongo-verify aborted. " +
+        "Toby must explicitly authorize TEST URI use; pass via env var, never hardcoded.";
+      log.error(mongoVerifyReport.error);
+      // Don't abort the whole run — write the report with the error
+      // section populated so AIDI sees what happened.
+    } else {
+      try {
+        mongoLoader = new MongoDirectLoader({
+          mongoUri: uri,
+          beUrl: opts.beUrl,
+          logger: log,
+          confirmTestOnly: true,
+        });
+        await mongoLoader.connect();
+        mongoVerifyReport.counts_before = await mongoLoader.collectionCounts(
+          mongoVerifyReport.collections_checked,
+        );
+        log.info("mongo_verify counts captured (before)", {
+          counts: mongoVerifyReport.counts_before,
+        });
+      } catch (err) {
+        mongoVerifyReport.status = "error";
+        mongoVerifyReport.error = err instanceof Error ? err.message : String(err);
+        log.error("mongo_verify connect/count failed", { error: mongoVerifyReport.error });
+        // Close any partially-opened resources
+        if (mongoLoader) {
+          try {
+            await mongoLoader.close();
+          } catch {}
+          mongoLoader = null;
+        }
+      }
+    }
+  }
 
   // ─── Categories cache-warm (AIDI Phase 3 gate item #2) ───
   // Anonymous endpoint; no credential. Resolves categoryName → ObjectId
@@ -442,11 +518,51 @@ async function main(): Promise<void> {
     ...(organizerSkipReason ? { organizer_skip_reason: organizerSkipReason } : {}),
   });
 
+  // ─── AIDI Phase 3 gate item #3: --mongo-verify AFTER snapshot + diff ───
+  if (opts.mongoVerify && mongoLoader && mongoVerifyReport.status !== "error") {
+    try {
+      mongoVerifyReport.counts_after = await mongoLoader.collectionCounts(
+        mongoVerifyReport.collections_checked,
+      );
+      log.info("mongo_verify counts captured (after)", {
+        counts: mongoVerifyReport.counts_after,
+      });
+      const before = mongoVerifyReport.counts_before ?? {};
+      const after = mongoVerifyReport.counts_after;
+      const diff: Record<string, number> = {};
+      let totalDiff = 0;
+      for (const c of mongoVerifyReport.collections_checked) {
+        const b = before[c] ?? 0;
+        const a = after[c] ?? 0;
+        diff[c] = a - b;
+        totalDiff += Math.abs(diff[c]);
+      }
+      mongoVerifyReport.diff = diff;
+      mongoVerifyReport.total_diff = totalDiff;
+      mongoVerifyReport.status =
+        totalDiff === 0 ? "verified_zero_writes" : "writes_detected";
+      log.info("mongo_verify diff", {
+        diff,
+        total_diff: totalDiff,
+        status: mongoVerifyReport.status,
+      });
+    } catch (err) {
+      mongoVerifyReport.status = "error";
+      mongoVerifyReport.error = err instanceof Error ? err.message : String(err);
+      log.error("mongo_verify after-snapshot failed", { error: mongoVerifyReport.error });
+    } finally {
+      try {
+        await mongoLoader.close();
+      } catch {}
+    }
+  }
+
   // ─── Build report ───
   const report: LoadReport = {
     niche: opts.niche,
     generated_at: new Date().toISOString(),
     loader: "dry-run",
+    mongo_verify: mongoVerifyReport,
     categories_cache: {
       status: categoryCacheStatus,
       be_url: opts.beUrl,
