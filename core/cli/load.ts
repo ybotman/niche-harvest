@@ -43,12 +43,22 @@ import {
   type VenueRow,
 } from "../loader/denorm.ts";
 import { DryRunLoader } from "../loader/dry-run.ts";
+import {
+  warmCategories,
+  resolveCategoryId,
+  CategoryWarmError,
+  type CategoryCache,
+} from "../loader/categories.ts";
 
 interface LoadOpts {
   niche: string;
   dryRun: boolean; // accepted for forward-compat; Phase 2 is always dry-run
   maxEvents: number;
   samples: number;
+  beUrl: string;
+  categoriesAppId: number;
+  appidOverride: number | null;
+  noWarmCategories: boolean;
 }
 
 function parseCli(argv: string[]): LoadOpts {
@@ -60,6 +70,16 @@ function parseCli(argv: string[]): LoadOpts {
     dryRun: true, // Phase 2 hardwired
     maxEvents: numArg(args, "--max-events", 500),
     samples: numArg(args, "--samples", 10),
+    beUrl:
+      pickArg(args, "--be-url") ?? "https://calendarbeaf-test.azurewebsites.net",
+    // Categories are global tango entities under appId=1; events written
+    // under appId-override (e.g. 99) reference appId=1 category ObjectIds.
+    // Cross-niche reference is fine — Mongo doesn't enforce; FE invisible.
+    categoriesAppId: numArg(args, "--categories-appid", 1),
+    appidOverride: pickArg(args, "--appid-override")
+      ? Number(pickArg(args, "--appid-override"))
+      : null,
+    noWarmCategories: args.includes("--no-warm-categories"),
   };
 }
 
@@ -88,12 +108,24 @@ interface LoadReport {
   niche: string;
   generated_at: string;
   loader: "dry-run";
+  /** Categories cache-warm status (AIDI Phase 3 gate item #2). */
+  categories_cache: {
+    status: "warmed" | "skipped" | "failed";
+    be_url: string;
+    appId: number;
+    entries: number;
+    sample_names: string[];
+    error?: string;
+    warmedAt?: string;
+  };
+  appid_override: number | null;
   this_run: {
     enriched_events_seen: number;
     eligible_for_load: number;
     skipped_no_venue: number;
     skipped_venue_not_geocoded: number;
     skipped_no_dates: number;
+    category_id_unknown: number;
     counts: ReturnType<DryRunLoader["counts"]>;
     /** Explicit reason when organizers_attempted=0 (AIDI 2026-04-25). */
     organizer_skip_reason?: string;
@@ -154,6 +186,45 @@ async function main(): Promise<void> {
   const db = openStore(opts.niche);
   const loader = new DryRunLoader();
 
+  // ─── Categories cache-warm (AIDI Phase 3 gate item #2) ───
+  // Anonymous endpoint; no credential. Resolves categoryName → ObjectId
+  // before first event build so dry-run captured docs carry real IDs.
+  let categoryCache: CategoryCache | null = null;
+  let categoryCacheStatus: "warmed" | "skipped" | "failed" = "skipped";
+  let categoryCacheError: string | undefined;
+  if (!opts.noWarmCategories) {
+    try {
+      categoryCache = await warmCategories({
+        beUrl: opts.beUrl,
+        appId: opts.categoriesAppId,
+        logger: log,
+      });
+      categoryCacheStatus = "warmed";
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      categoryCacheStatus = "failed";
+      categoryCacheError = message;
+      log.warn("categories cache-warm failed; proceeding with null categoryFirstId", {
+        error: message,
+        be_url: opts.beUrl,
+      });
+    }
+  }
+  const appIdInUse = opts.appidOverride ?? niche.niche.appid;
+  if (opts.appidOverride !== null) {
+    log.info("appid_override active", {
+      override: opts.appidOverride,
+      niche_yaml_appid: niche.niche.appid,
+      reason: "test-isolation; FE filters by niche.yaml appid; cleanup via deleteMany({appId: override})",
+    });
+  }
+  // Synthesize an effective niche config with overridden appid; doc
+  // builders read niche.niche.appid for venue/organizer/event docs.
+  const effectiveNiche = {
+    ...niche,
+    niche: { ...niche.niche, appid: appIdInUse },
+  };
+
   // ─── Read enriched raw_events JOIN their venue via FK (AIDI 2026-04-25
   // Phase 3 gate #1: schema v2 added raw_events.venue_id; enrich populates
   // at venue upsert time; load joins by FK not text-match) ───
@@ -196,6 +267,7 @@ async function main(): Promise<void> {
   let skippedVenueNotGeocoded = 0;
   let skippedNoDates = 0;
   let eligible = 0;
+  let categoryIdUnknown = 0;
 
   for (const row of rows) {
     // ─── Re-derive RawEvent + classify (same path as enrich) ───
@@ -246,7 +318,7 @@ async function main(): Promise<void> {
     // ─── 1. Organizer (lookup-or-create) ───
     let ownerOrganizerID: string | null = null;
     if (row.re_raw_organizer_text) {
-      const orgDoc = buildOrganizerDoc(row.re_raw_organizer_text, niche);
+      const orgDoc = buildOrganizerDoc(row.re_raw_organizer_text, effectiveNiche);
       if (orgDoc) {
         const id = await loader.upsertOrganizer(orgDoc);
         ownerOrganizerID = String(id);
@@ -264,10 +336,22 @@ async function main(): Promise<void> {
       lat: row.v_lat,
       lng: row.v_lng,
     };
-    const venueDoc = buildVenueDoc(venueRow, niche);
+    const venueDoc = buildVenueDoc(venueRow, effectiveNiche);
     const { venueId, masteredChain } = await loader.upsertVenue(venueDoc);
 
-    // ─── 3. Event (insertOne with full denorm) ───
+    // ─── 3. categoryFirstId resolution from cache (LOADER §6.4) ───
+    let categoryFirstId: string | null = null;
+    if (categoryCache && cl.category_first) {
+      categoryFirstId = resolveCategoryId(categoryCache, cl.category_first);
+      if (categoryFirstId === null) {
+        categoryIdUnknown += 1;
+        // Per LOADER-CONTRACT §6.4: unknown category string → quality_flag,
+        // event excluded from load. We still capture the would-be doc here
+        // for dry-run reporting visibility but mark it.
+      }
+    }
+
+    // ─── 4. Event (insertOne with full denorm) ───
     const enriched: EnrichedRow = {
       id: row.re_id,
       source_id: row.re_source_id,
@@ -285,11 +369,11 @@ async function main(): Promise<void> {
     const eventDoc = buildEventDoc({
       enriched,
       venue: venueRow,
-      niche,
+      niche: effectiveNiche,
       venueChain: masteredChain,
       venueId,
       ownerOrganizerID,
-      categoryFirstId: null, // dry-run; live populates from cache-warmed categories per §6.4
+      categoryFirstId: categoryFirstId,
     });
     await loader.insertEvent(eventDoc);
   }
@@ -363,13 +447,27 @@ async function main(): Promise<void> {
     niche: opts.niche,
     generated_at: new Date().toISOString(),
     loader: "dry-run",
+    categories_cache: {
+      status: categoryCacheStatus,
+      be_url: opts.beUrl,
+      appId: opts.categoriesAppId,
+      entries: categoryCache?.byName.size ?? 0,
+      sample_names: categoryCache
+        ? Array.from(categoryCache.byName.keys()).slice(0, 10)
+        : [],
+      ...(categoryCacheError ? { error: categoryCacheError } : {}),
+      ...(categoryCache ? { warmedAt: categoryCache.warmedAt } : {}),
+    },
+    appid_override: opts.appidOverride,
     this_run: {
       enriched_events_seen: rows.length,
       eligible_for_load: eligible,
       skipped_no_venue: skippedNoVenue,
       skipped_venue_not_geocoded: skippedVenueNotGeocoded,
       skipped_no_dates: skippedNoDates,
+      category_id_unknown: categoryIdUnknown,
       counts,
+      ...(organizerSkipReason ? { organizer_skip_reason: organizerSkipReason } : {}),
     },
     total_state: totalState,
     quality_flags_this_batch: qfThisBatch,
