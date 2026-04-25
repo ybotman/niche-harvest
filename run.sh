@@ -54,8 +54,11 @@ case "$COMMAND" in
   enrich)
     exec node --experimental-strip-types core/cli/enrich.ts "${PASSTHROUGH[@]}"
     ;;
-  geocode|load|scheduler)
-    echo "run.sh: command '$COMMAND' not yet implemented (Phase 1 ships snapshot + enrich)" >&2
+  load)
+    exec node --experimental-strip-types core/cli/load.ts "${PASSTHROUGH[@]}"
+    ;;
+  geocode|scheduler)
+    echo "run.sh: command '$COMMAND' not yet implemented (Phase 1+2 ships snapshot + enrich + load)" >&2
     exit 3
     ;;
   *)

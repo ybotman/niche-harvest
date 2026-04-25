@@ -219,11 +219,22 @@ M1 is delivered in baby-step phases. Each phase ends with a measurable, reviewab
 - [ ] Add classifier duration-validation gate (per Porter's CALBEAF-141 + memory `project_classifier_needs_duration_validation.md`) — SHORT-category events with duration >=24h should re-classify or emit `quality_flag: duration_violation` not load as Milonga.
 - [ ] Resolve `Q-AI-01-RECONFIRM` with AIDI before Phase 3 (90% loadable-rate denominator semantics).
 
-### Phase 2 — Dry-run loader
-- [ ] `core/loader/interface.ts` — swap-ready abstraction
-- [ ] `core/loader/mongo-direct.ts` — direct-Mongo impl (Porter pattern) per LOADER-CONTRACT.md §8
-- [ ] `--dry-run` loader produces "what would be written" report
+### Phase 2 — Dry-run loader (DONE 2026-04-25)
+- [x] `core/loader/interface.ts` — Loader abstraction + OrganizerDoc + VenueDoc + EventDoc shapes per LOADER-CONTRACT §6
+- [x] `core/loader/denorm.ts` — buildEventDoc with full §6 denorm; shortName generator §4.2; `authorOrganizerID ← ownerOrganizerID` copy explicit (§6.2 + AIDI 2026-04-25)
+- [x] `core/loader/dry-run.ts` — DryRunLoader implements Loader; captures Organizer/Venue/Event docs without writing; dedups by fullName / venue+city
+- [x] `core/cli/load.ts` + `bash run.sh load` — orchestrator: enriched raw_events JOIN geocoded venues → docs → DryRunLoader → JSON report
+- [x] Report has `this_run`, `total_state`, `quality_flags_this_batch`, `sample_documents` (organizers/venues/events) per AIDI's 3 expectations 2026-04-25
+- [x] All §6 fields present in event docs incl. `TODO:automaster` sentinels for mastered chain (verifiable contract honor)
+- [ ] `core/loader/mongo-direct.ts` — Phase 3 deliverable; AIDI greenlight required before construction
 - [ ] AIDI reviews dry-run report vs. equivalent Porter run
+
+slc-wasatch dry-run report (`data/tango/snapshots/2026-04-25-load.json`):
+- 290 enriched seen → 171 eligible_for_load → 171 events would_insert
+- 18 skipped_no_venue + 101 skipped_venue_not_geocoded
+- 0 organizers (all 10 organizer-bearing events have failed-geocode venues; explainable)
+- 171 venue ops: 55 created + 116 existing-dedup
+- quality_flags_this_batch: 9 duration_violation + 49 geocode_failed + 134 skip_class_only + 86 skip_unknown + 3 skip_performance
 
 ### Phase 3 — Live TEST write (AIDI greenlight gate)
 - [ ] AIDI-approved live TEST write on slc-wasatch
