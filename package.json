@@ -9,6 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test:unit": "bash scripts/run-unit-tests.sh",
     "smoke:mock-fb": "node --experimental-strip-types test/mock-fb/smoke-test.ts"
   },
   "dependencies": {
