@@ -47,9 +47,11 @@ const VALID_PRIORITY: ReadonlySet<string> = new Set([
 const VALID_MONGO_ENV: ReadonlySet<string> = new Set(["test", "prod", "devl"]);
 
 export class NicheConfigError extends Error {
-  constructor(message: string, public readonly nichePath: string) {
+  readonly nichePath: string;
+  constructor(message: string, nichePath: string) {
     super(`niche.yaml validation failed (${nichePath}): ${message}`);
     this.name = "NicheConfigError";
+    this.nichePath = nichePath;
   }
 }
 
