@@ -51,8 +51,11 @@ case "$COMMAND" in
   snapshot)
     exec node --experimental-strip-types core/cli/snapshot.ts "${PASSTHROUGH[@]}"
     ;;
-  enrich|geocode|load|scheduler)
-    echo "run.sh: command '$COMMAND' not yet implemented (Phase 1 ships snapshot only)" >&2
+  enrich)
+    exec node --experimental-strip-types core/cli/enrich.ts "${PASSTHROUGH[@]}"
+    ;;
+  geocode|load|scheduler)
+    echo "run.sh: command '$COMMAND' not yet implemented (Phase 1 ships snapshot + enrich)" >&2
     exit 3
     ;;
   *)
