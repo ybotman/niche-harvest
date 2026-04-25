@@ -27,6 +27,7 @@
 
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { loadNiche, NicheConfigError } from "../config.ts";
 import { createLogger } from "../logger.ts";
@@ -130,6 +131,14 @@ interface LoadReport {
   niche: string;
   generated_at: string;
   loader: "dry-run";
+  /** GUARDRAILS H11: per-cycle UUID for rollback. Format: nh-<niche>-<utc>-<8>. */
+  nh_batch_id: string;
+  /** Pre-built rollback command — paste-ready when needed. */
+  rollback_commands: {
+    events: string;
+    venues: string;
+    organizers: string;
+  };
   /** AIDI Phase 3 gate item #3: zero-writes proof via Mongo count diff. */
   mongo_verify: MongoVerifyReport;
   /** Categories cache-warm status (AIDI Phase 3 gate item #2). */
@@ -209,6 +218,21 @@ async function main(): Promise<void> {
 
   const db = openStore(opts.niche);
   const loader = new DryRunLoader();
+
+  // ─── GUARDRAILS H11: per-cycle batch_id for rollback ───
+  // Format: nh-<niche>-<utc-yyyymmddThhmmss>-<8-char-uuid-suffix>
+  // Human-readable + sortable + collision-safe. Threaded through every
+  // doc; report records it at top so rollback is trivial:
+  //   db.events.deleteMany({nh_batch_id: "<id-from-report>"})
+  const nhBatchId = `nh-${opts.niche}-${new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\..+$/, "")}-${randomUUID().slice(0, 8)}`;
+  log.info("nh_batch_id assigned", {
+    nh_batch_id: nhBatchId,
+    note: "rollback any --live writes from this run via " +
+          "db.<collection>.deleteMany({nh_batch_id: <id>})",
+  });
 
   // ─── AIDI Phase 3 gate item #3: --mongo-verify ───
   // Connects to TEST Mongo (read-only), captures collection counts
@@ -394,7 +418,7 @@ async function main(): Promise<void> {
     // ─── 1. Organizer (lookup-or-create) ───
     let ownerOrganizerID: string | null = null;
     if (row.re_raw_organizer_text) {
-      const orgDoc = buildOrganizerDoc(row.re_raw_organizer_text, effectiveNiche);
+      const orgDoc = buildOrganizerDoc(row.re_raw_organizer_text, effectiveNiche, nhBatchId);
       if (orgDoc) {
         const id = await loader.upsertOrganizer(orgDoc);
         ownerOrganizerID = String(id);
@@ -412,7 +436,7 @@ async function main(): Promise<void> {
       lat: row.v_lat,
       lng: row.v_lng,
     };
-    const venueDoc = buildVenueDoc(venueRow, effectiveNiche);
+    const venueDoc = buildVenueDoc(venueRow, effectiveNiche, nhBatchId);
     const { venueId, masteredChain } = await loader.upsertVenue(venueDoc);
 
     // ─── 3. categoryFirstId resolution from cache (LOADER §6.4) ───
@@ -450,6 +474,7 @@ async function main(): Promise<void> {
       venueId,
       ownerOrganizerID,
       categoryFirstId: categoryFirstId,
+      nhBatchId,
     });
     await loader.insertEvent(eventDoc);
   }
@@ -562,6 +587,12 @@ async function main(): Promise<void> {
     niche: opts.niche,
     generated_at: new Date().toISOString(),
     loader: "dry-run",
+    nh_batch_id: nhBatchId,
+    rollback_commands: {
+      events: `db.events.deleteMany({nh_batch_id: "${nhBatchId}"})`,
+      venues: `db.venues.deleteMany({nh_batch_id: "${nhBatchId}"})`,
+      organizers: `db.organizers.deleteMany({nh_batch_id: "${nhBatchId}"})`,
+    },
     mongo_verify: mongoVerifyReport,
     categories_cache: {
       status: categoryCacheStatus,

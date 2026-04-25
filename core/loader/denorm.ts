@@ -60,6 +60,7 @@ export interface VenueRow {
 export function buildVenueDoc(
   v: VenueRow,
   niche: NicheConfig,
+  nhBatchId: string,
 ): VenueDoc {
   const doc: VenueDoc = {
     name: v.name,
@@ -68,6 +69,7 @@ export function buildVenueDoc(
     appId: niche.niche.appid,
     isDiscovered: true,
     discoverySource: niche.loader.discovery_source,
+    nh_batch_id: nhBatchId,
   };
   if (v.address) doc.address = v.address;
   if (v.city) doc.city = v.city;
@@ -117,6 +119,7 @@ export function generateShortName(fullName: string): string | null {
 export function buildOrganizerDoc(
   fullName: string,
   niche: NicheConfig,
+  nhBatchId: string,
   opts: { fb_profile_url?: string; event_count?: number } = {},
 ): OrganizerDoc | null {
   const sn = generateShortName(fullName);
@@ -127,6 +130,7 @@ export function buildOrganizerDoc(
     appId: niche.niche.appid,
     isDiscovered: true,
     discoverySource: niche.loader.discovery_source,
+    nh_batch_id: nhBatchId,
   };
   if (opts.fb_profile_url) doc.fb_profile_url = opts.fb_profile_url;
   if (typeof opts.event_count === "number") doc.event_count = opts.event_count;
@@ -152,6 +156,8 @@ export interface EventDocInputs {
    * Null in dry-run where cache isn't warmed.
    */
   categoryFirstId: ObjectId | string | null;
+  /** GUARDRAILS H11: per-cycle UUID; rollback = deleteMany({nh_batch_id}). */
+  nhBatchId: string;
 }
 
 export function buildEventDoc(inputs: EventDocInputs): EventDoc {
@@ -212,6 +218,7 @@ export function buildEventDoc(inputs: EventDocInputs): EventDoc {
     trustLevel: niche.loader.trust_level,
     isDiscovered: true,
     discoverySource: niche.loader.discovery_source,
+    nh_batch_id: inputs.nhBatchId,
     shortTitle,
     ...(enriched.raw_description ? { description: enriched.raw_description } : {}),
     travelWorthy,

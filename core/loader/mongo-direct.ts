@@ -269,11 +269,20 @@ export class MongoDirectLoader implements Loader {
     // to compute pre-insert without the venue tz; we use UTC start day
     // as a conservative proxy. If a duplicate is found we increment
     // events_skipped_existing rather than insert.
+    //
+    // GUARDRAILS H3 (CRITICAL): dedup query MUST filter
+    // {isDiscovered: true} so we never collide with user-entered events
+    // (isDiscovered=false). If a user-entered event happens to match
+    // (appId, title, day-bucket, venue), our discovery write should NOT
+    // be suppressed — the discovery event is a separate row. Conversely
+    // we must never UPDATE a user row by mistaking it for a discovery
+    // duplicate.
     const dupQuery = {
       appId: doc.appId,
       title: doc.title,
       startDate: { $gte: dayStart(doc.startDate), $lt: dayEnd(doc.startDate) },
       venueID: doc.venueID,
+      isDiscovered: true,
     };
     const dup = await this.db.collection("events").findOne(dupQuery, {
       projection: { _id: 1 },

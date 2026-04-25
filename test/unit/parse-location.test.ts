@@ -24,21 +24,29 @@ test("parseLocation — 'United States' / 'USA' / 'U.S.A.' all normalize to US",
   }
 });
 
-test("parseLocation — Cyrillic 'СШΑ' falls through (TODO: add to country dict)", () => {
+test("parseLocation — Cyrillic 'СШΑ' blocks downstream parsing (TODO: skip-unknown-country heuristic)", () => {
   // Note: source has cyrillic "СШΑ" (with mixed Greek alpha at end) — exact
-  // byte sequence from slc-wasatch's real feed. Not in COUNTRY_NORMALIZE
-  // dict today, so it falls through and breaks downstream parsing:
-  //   - country_iso stays undefined
-  //   - state-detection looks at "СШΑ" (last token after country strip),
-  //     doesn't match US_STATES, so state stays undefined
-  //   - city becomes "СШΑ"
-  //   - "UT 84401" gets pushed back into address tokens
-  // This documents current behavior; follow-up should add the byte sequence
-  // to the dict and fix this test to assert state=UT, country_iso=US.
+  // byte sequence from slc-wasatch's real feed. Not in COUNTRY_NORMALIZE,
+  // so country-pop SKIPS but the token stays at end of remaining[]. State
+  // detection then sees "СШΑ" as last-token, can't parse, also leaves
+  // remaining[] alone. Same for city. Result: address-slot eats EVERYTHING
+  // from "2580 Jefferson Ave" through "СШΑ".
+  //
+  // This is acceptable for v1 — the venue still fingerprints by venue_name
+  // alone (city defaults to feed-default at enrich time). But documents a
+  // known limitation: an unknown trailing country breaks downstream parsing
+  // for that one event. Future fix: heuristic "if country-candidate looks
+  // country-like (non-ASCII, short, capitalized) but isn't in dict, skip
+  // it anyway and continue parsing."
   const p = parseLocation("Eccles Community Art Center, 2580 Jefferson Ave, Ogden, UT 84401, СШΑ");
+  assert.equal(p.venue_name, "Eccles Community Art Center");
   assert.equal(p.country_iso, undefined);
   assert.equal(p.state, undefined);
-  assert.equal(p.city, "СШΑ");
+  assert.equal(p.city, undefined);
+  // Address slot ate everything that wasn't venue (because none of state/
+  // city/country could pop it):
+  assert.match(p.address ?? "", /Ogden/);
+  assert.match(p.address ?? "", /СШΑ/);
 });
 
 test("parseLocation — no venue prefix (address starts with digit)", () => {

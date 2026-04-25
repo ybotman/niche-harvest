@@ -32,6 +32,8 @@ export interface OrganizerDoc {
   event_count?: number;
   isDiscovered: true;
   discoverySource: string;
+  /** GUARDRAILS H11: per-cycle UUID; rollback = deleteMany({nh_batch_id}). */
+  nh_batch_id: string;
 }
 
 /**
@@ -51,6 +53,8 @@ export interface VenueDoc {
   appId: number;
   isDiscovered: true;
   discoverySource: string;
+  /** GUARDRAILS H11: per-cycle UUID; rollback = deleteMany({nh_batch_id}). */
+  nh_batch_id: string;
 }
 
 /**
@@ -93,6 +97,8 @@ export interface EventDoc {
   trustLevel: string;
   isDiscovered: true;
   discoverySource: string;
+  /** GUARDRAILS H11: per-cycle UUID; rollback = deleteMany({nh_batch_id}). */
+  nh_batch_id: string;
   shortTitle?: string;
   description?: string;
   // §6.3 classifier-derived + override
