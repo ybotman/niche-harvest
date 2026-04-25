@@ -19,13 +19,13 @@ mission: M1
 
 ## 1. Current state (where are we RIGHT NOW)
 
-**Date of last update:** 2026-04-24
+**Date of last update:** 2026-04-25
 
 **Active mission:** M1 (see `MISSION.md`) — laptop + tango + full functional parity with current pipeline + design-for-90% load rate.
 
-**Current phase:** Transitioning Phase 0 → **Phase 1 (Backbone: single-source iCal snapshot)**. All three contract docs locked; implementation cleared to begin.
+**Current phase:** **Phase 1 backbone GREEN** end-to-end on slc-wasatch. Stretch (classify + geocode chain) GREEN at 55% geocode rate. All Phase 0 contracts LOCKED.
 
-**Current task:** Phase 0 wrap-up cosmetics (Librarian symlink relay via Quinn; Quinn doc-only review pending). First Phase 1 deliverable up next: `core/types.ts`.
+**Current task:** Validate Phase 1 measurability gates with AIDI; improve geocoder above 90%; add classifier duration-validation gate before Phase 2 (loader). niche-harvest is now its own repo at github.com/ybotman/niche-harvest (Quinn split 2026-04-25).
 
 **What's in-flight right now:**
 - LOADER-CONTRACT.md — **LOCKED** 2026-04-24 (AIDI + Fulton + Sarah cleared)
@@ -195,17 +195,29 @@ M1 is delivered in baby-step phases. Each phase ends with a measurable, reviewab
 
 **Phase 0 gate:** LOADER-CONTRACT.md + SAFEGUARD-SPEC.md + ARCHITECTURE.md all locked; `niches/tango/niche.yaml` drafted with real source inventory.
 
-### Phase 1 — Backbone: single-source iCal snapshot (deferred to post-Phase-0)
-- [ ] `core/types.ts` — shared types + path constants
-- [ ] `core/store.ts` — SQLite schema, WAL, migrations
-- [ ] `core/config.ts` — niche.yaml loader
-- [ ] `core/adapters/ical.ts` — iCal adapter (stealing pattern from `gcal-harvest.ts`)
-- [ ] `core/geocoder/nominatim.ts` — Nominatim + disk cache
-- [ ] `core/classifier/*` — niche.yaml-driven classifier
-- [ ] `run.sh --niche=tango snapshot` command produces `data/tango/snapshots/YYYY-MM-DD.json`
-- [ ] Snapshot passes measurability gates: events_found matches feed, every event in loadable OR quality_flags (never both/neither), 100% loadable events have geocoded venue, byte-stable re-run, clean Day-2 diff
+### Phase 1 — Backbone: single-source iCal snapshot (current; backbone GREEN)
+- [x] `core/types.ts` — shared types + path constants (RawEvent w/ timezone_hint + source_rrule pass-through)
+- [x] `core/store.ts` — SQLite schema (full §3.1 — 10 tables), WAL, migrations
+- [x] `core/config.ts` — niche.yaml loader (js-yaml; strict validation; NicheConfigError on any structural issue)
+- [x] `core/adapters/ical.ts` — RFC 5545 parser ported from Harvey's gcal-harvest reference
+- [x] `core/geocoder/nominatim.ts` — Nominatim + disk cache + 1.1s rate limit + trusted_country_codes gate
+- [x] `core/classify.ts` — identityCheck + classify per LOADER §7 (LONG > SHORT > NEUTRAL precedence)
+- [x] `run.sh --niche=tango snapshot` produces `data/tango/snapshots/YYYY-MM-DD.json` — 540 events from slc-wasatch (2,323 in feed → 540 in 7d/365d window → 522 unique by fingerprint)
+- [x] `run.sh --niche=tango enrich` runs identity → classify → venue dedup → geocode chain
+- [-] Snapshot measurability gates:
+  - [x] events_found accounts for entire feed (2323 found, 540 in window, 1783 explicitly skipped — no silent drops)
+  - [x] every event in loadable OR skipped (mutually exclusive by code shape)
+  - [-] 100% loadable events have geocoded venue — **CURRENTLY 55%** (57/103 venues geocoded; 46 fail mostly on SLC grid-system addresses; needs Phase 1.5 geocoder improvement before live TEST)
+  - [x] byte-stable re-run (Day-2: 0 new + 540 dupes)
+  - [-] clean Day-2 diff (only relevant when feed actually changes)
+- [ ] AIDI parity review of snapshot+enrich output vs Harvey's gcal-harvest
 
-**Phase 1 gate:** slc-wasatch iCal produces a valid snapshot locally, no Mongo writes, no auth, fully dry-runnable. AIDI reviews snapshot for parity-vs-Harvey's output.
+**Phase 1 gate:** slc-wasatch iCal produces a valid snapshot locally, no Mongo writes, no auth, fully dry-runnable. AIDI reviews snapshot for parity-vs-Harvey's output. **Backbone gate met; geocode-rate gate not yet met.**
+
+### Phase 1.5 — Geocoder + classifier hardening (NEW — added 2026-04-25)
+- [ ] Boost geocode success rate from 55% toward 90%+ — see memory `project_nominatim_geocoder_limits_v1.md` for diagnosis. Likely needs SLC grid-address normalizer or alt geocoder.
+- [ ] Add classifier duration-validation gate (per Porter's CALBEAF-141 + memory `project_classifier_needs_duration_validation.md`) — SHORT-category events with duration >=24h should re-classify or emit `quality_flag: duration_violation` not load as Milonga.
+- [ ] Resolve `Q-AI-01-RECONFIRM` with AIDI before Phase 3 (90% loadable-rate denominator semantics).
 
 ### Phase 2 — Dry-run loader
 - [ ] `core/loader/interface.ts` — swap-ready abstraction
