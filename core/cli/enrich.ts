@@ -25,7 +25,7 @@ import { join } from "node:path";
 
 import { loadNiche, NicheConfigError } from "../config.ts";
 import { createLogger } from "../logger.ts";
-import { openStore } from "../store.ts";
+import { openStore, getVenueIdByFingerprint, linkRawEventVenue } from "../store.ts";
 import { fingerprintVenue } from "../fingerprint.ts";
 import { identityCheck, classify } from "../classify.ts";
 import { NominatimGeocoder } from "../geocoder/nominatim.ts";
@@ -198,10 +198,12 @@ async function main(): Promise<void> {
   });
 
   // ─── Pass 1: Identity + classify ───
-  // Collect unique venues for batched geocoding pass 2.
+  // Collect unique venues for batched geocoding pass 2. Track ALL raw_event
+  // ids sharing each venue so we can FK-link them to the venue row after
+  // upsert (AIDI 2026-04-25 Phase 3 gate item #1).
   const venueQueue = new Map<
     string,
-    { fingerprint: string; venue_text: string; first_event_id: number }
+    { fingerprint: string; venue_text: string; raw_event_ids: number[] }
   >();
 
   const updateRawStatus = db.prepare(
@@ -307,11 +309,14 @@ async function main(): Promise<void> {
     // ─── Queue venue for geocoding pass ───
     if (row.raw_location_text) {
       const fp = fingerprintVenue({ name: row.raw_location_text });
-      if (!venueQueue.has(fp)) {
+      const existing = venueQueue.get(fp);
+      if (existing) {
+        existing.raw_event_ids.push(row.id);
+      } else {
         venueQueue.set(fp, {
           fingerprint: fp,
           venue_text: row.raw_location_text,
-          first_event_id: row.id,
+          raw_event_ids: [row.id],
         });
       }
     }
@@ -349,7 +354,7 @@ async function main(): Promise<void> {
         venueQueue.set(r.fingerprint, {
           fingerprint: r.fingerprint,
           venue_text: r.name,
-          first_event_id: 0, // not tied to a specific raw_event (retry context)
+          raw_event_ids: [], // retry context — not tied to specific events
         });
         requeued += 1;
       }
@@ -442,6 +447,13 @@ async function main(): Promise<void> {
           result.source ?? null,
           "geocoded",
         );
+        // FK link: every raw_event that referenced this venue gets its
+        // venue_id set to the upserted venue row id (AIDI 2026-04-25
+        // Phase 3 gate item #1; replaces fragile text-match join).
+        const venueId = getVenueIdByFingerprint(db, v.fingerprint);
+        if (venueId !== null) {
+          for (const reId of v.raw_event_ids) linkRawEventVenue(db, reId, venueId);
+        }
       }
     } else {
       totals.venues_geocode_failed += 1;
@@ -453,14 +465,21 @@ async function main(): Promise<void> {
           result.source ?? null,
           "failed",
         );
+        // Even on failure: link raw_events to the venue row (status=failed)
+        // so the load pipeline can see WHY they're not loadable. Loader
+        // checks venue.geocode_status before treating as loadable.
+        const venueId = getVenueIdByFingerprint(db, v.fingerprint);
+        if (venueId !== null) {
+          for (const reId of v.raw_event_ids) linkRawEventVenue(db, reId, venueId);
+        }
         // Pin the failure to the first raw_event that referenced this venue
         // — gives the operator a single trace path back to source for review.
         // Skip the quality_flag insert on retry-failed-venues path
-        // (first_event_id=0 means "no tying event"; the original failure
+        // (raw_event_ids empty means "no tying event"; the original failure
         // already has its quality_flag from the first enrich pass).
-        if (v.first_event_id > 0) {
+        if (v.raw_event_ids.length > 0) {
           insertVenueQualityFlag.run(
-            v.first_event_id,
+            v.raw_event_ids[0]!,
             null,
             "geocode_failed",
             result.reject_reason ?? null,
@@ -501,21 +520,16 @@ async function main(): Promise<void> {
     summary.total_state.quality_flags_total += r.n;
     summary.total_state.quality_flags_by_reason[r.reason] = r.n;
   }
-  // loadable_for_phase_2: enriched raw_events with a geocoded venue.
-  // Joins raw_events → venues by venue_text matched on fingerprint.
-  // (Phase 1 store doesn't yet link raw_event → venue_id; we approximate
-  // by the venue fingerprint being in the geocoded set. This will sharpen
-  // when Phase 2 loader writes events table with venue_id FK.)
+  // loadable_for_phase_2: enriched raw_events whose linked venue is geocoded.
+  // Schema v2 added raw_events.venue_id FK populated at venue upsert
+  // (AIDI 2026-04-25 Phase 3 gate #1).
   const phase2 = db
     .prepare(`
       SELECT COUNT(*) AS n
       FROM raw_events re
+      JOIN venues v ON v.id = re.venue_id
       WHERE re.status = 'enriched'
-        AND EXISTS (
-          SELECT 1 FROM venues v
-          WHERE v.geocode_status = 'geocoded'
-            AND v.name = re.raw_location_text
-        )
+        AND v.geocode_status = 'geocoded'
     `)
     .get() as unknown as { n: number };
   summary.total_state.loadable_for_phase_2 = phase2.n;

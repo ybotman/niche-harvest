@@ -152,10 +152,9 @@ async function main(): Promise<void> {
   const db = openStore(opts.niche);
   const loader = new DryRunLoader();
 
-  // ─── Read enriched raw_events JOIN their (geocoded) venue by name ───
-  // The Phase 1 store doesn't link raw_event.venue_id; we approximate by
-  // matching raw_location_text to venues.name. Phase 2.5 should add a
-  // dedicated join column when we link in the enrich pass.
+  // ─── Read enriched raw_events JOIN their venue via FK (AIDI 2026-04-25
+  // Phase 3 gate #1: schema v2 added raw_events.venue_id; enrich populates
+  // at venue upsert time; load joins by FK not text-match) ───
   const rows = db
     .prepare(`
       SELECT
@@ -178,7 +177,7 @@ async function main(): Promise<void> {
         v.lng              AS v_lng,
         v.geocode_status   AS v_geocode_status
       FROM raw_events re
-      LEFT JOIN venues v ON v.name = re.raw_location_text
+      LEFT JOIN venues v ON v.id = re.venue_id
       WHERE re.status = 'enriched'
       ORDER BY re.id
       LIMIT ?

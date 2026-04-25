@@ -19,7 +19,7 @@ import { dirname } from "node:path";
 import type { SourceConfig } from "./types.ts";
 import { PATHS } from "./types.ts";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface SourceRow {
   id: number;
@@ -110,8 +110,28 @@ function migrate(db: DatabaseSync): void {
     applyV1(db);
     db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(1);
   }
+  if (current < 2) {
+    applyV2(db);
+    db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(2);
+  }
+}
 
-  // Future: if (current < 2) applyV2(db); ... bump SCHEMA_VERSION above.
+/**
+ * Migration v2 (2026-04-25, AIDI Phase 3 gate item #1):
+ * Add raw_events.venue_id INTEGER REFERENCES venues(id) so the load
+ * pipeline can FK-join instead of fragile text-match against
+ * raw_location_text. Set at enrich time after venue upsert.
+ */
+function applyV2(db: DatabaseSync): void {
+  // SQLite doesn't support adding FK constraints via ALTER. Add the
+  // column without REFERENCES; the FK semantics are enforced by code
+  // (insertRawEvent + linkRawEventVenue, etc.). Index for join speed.
+  const cols = (db.prepare("PRAGMA table_info(raw_events)").all() as unknown as { name: string }[])
+    .map((c) => c.name);
+  if (!cols.includes("venue_id")) {
+    db.exec(`ALTER TABLE raw_events ADD COLUMN venue_id INTEGER`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_raw_events_venue ON raw_events(venue_id) WHERE venue_id IS NOT NULL`);
+  }
 }
 
 function applyV1(db: DatabaseSync): void {
@@ -442,6 +462,37 @@ export function countRawEventsForSource(
     .prepare("SELECT COUNT(*) AS c FROM raw_events WHERE source_id = ?")
     .get(sourceRowId) as { c: number };
   return row.c;
+}
+
+/**
+ * Look up a venue's id by fingerprint. Used by enrich to bind raw_events
+ * to the venue row created at the same upsert step. Returns null if no
+ * venue with that fingerprint exists.
+ */
+export function getVenueIdByFingerprint(
+  db: DatabaseSync,
+  fingerprint: string,
+): number | null {
+  const row = db
+    .prepare("SELECT id FROM venues WHERE fingerprint = ?")
+    .get(fingerprint) as { id: number } | undefined;
+  return row ? row.id : null;
+}
+
+/**
+ * Link a raw_event to its venue row (sets raw_events.venue_id). Per AIDI
+ * 2026-04-25 Phase 3 gate item #1: replaces fragile text-match join
+ * with a real FK so the load pipeline can refer to the venue row by id.
+ */
+export function linkRawEventVenue(
+  db: DatabaseSync,
+  rawEventId: number,
+  venueId: number,
+): void {
+  db.prepare("UPDATE raw_events SET venue_id = ? WHERE id = ?").run(
+    venueId,
+    rawEventId,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
