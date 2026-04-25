@@ -31,10 +31,25 @@ export function fingerprintRawEvent(input: {
 
 /**
  * Compute a venue fingerprint for the venues table (ARCHITECTURE §3.1).
- * Used for venue-level dedup before geocoding. Same normalization rules.
+ * Used for venue-level dedup before geocoding.
+ *
+ * Pattern source: Harvey's `harvester/scripts/gcal-harvest.ts:723` — keys
+ * dedup by `${venue_name}|${city}` after parseLocation extracts structured
+ * parts. niche-harvest mirrors. Caller MUST pass parsed venue_name (NOT
+ * raw_location_text) — passing raw text fragments venues 5-10x.
+ *
+ * AIDI 2026-04-25 root-cause: keying on raw text turned 10 real venues
+ * into 101 fragmented venues on slc-wasatch (54% vs Harvey's 100% rate).
+ * Fixed by switching to parsed venue_name + city.
  */
 export function fingerprintVenue(input: {
+  /** Parsed venue name from parse-location.ts (e.g. "DF Dance Studio").
+   *  If parser couldn't extract a name, caller should pass the raw text
+   *  truncated to first comma chunk + the extracted city as a best-effort. */
   name: string;
+  /** Parsed city from parse-location.ts. Empty string acceptable when
+   *  the city couldn't be extracted; means the venue is dedup'd within
+   *  the unknown-city bucket (still better than full-text fragmenting). */
   city?: string;
 }): string {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");

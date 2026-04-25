@@ -110,15 +110,33 @@ export function parseLocation(text: string): ParsedLocation {
   }
 
   // ─── City (now last token, after country + state stripped) ───
+  // City must look like a city name: starts with a letter, contains NO
+  // digits (digits = street numbers = address fragment). When the last
+  // token has digits it's an address-string with no comma before the
+  // city; the actual city is then unrecoverable structurally and we
+  // leave city undefined (caller can fall back to feed-default).
+  // Without this guard, "1321 East 3300 South  Millcreek" gets eaten as
+  // city, leaving venue_name unset → fragmentation. (slc-wasatch real case.)
   if (remaining.length > 0) {
-    city = remaining[remaining.length - 1];
-    remaining.pop();
+    const lastToken = remaining[remaining.length - 1]!;
+    const looksLikeCity =
+      /^[A-Za-z]/.test(lastToken) && !/\d/.test(lastToken);
+    if (looksLikeCity) {
+      city = lastToken;
+      remaining.pop();
+    }
+    // If last token has digits, leave it in remaining as part of address.
   }
 
-  // ─── Venue name + address (the remaining 0/1/2+ tokens at the front) ───
+  // ─── Venue name + address (remaining 0/1/2+ tokens at the front) ───
   // Heuristic: first token is a venue name if it starts with a letter and
   // has no leading digit (digits = street number = address). Multiple
   // address tokens (e.g., "123 Main St", "Suite 6") get joined.
+  // SINGLE-token case (changed 2026-04-25): when only ONE token remains
+  // and it looks like a venue name (alpha-leading, no digit-leading),
+  // treat as venue_name not address. Real venue strings often look like
+  // "Studio Name, City, ST" with NO street address; without this rule,
+  // the venue gets dropped into the address slot and lost from dedup.
   if (remaining.length > 0) {
     const first = remaining[0]!;
     const looksLikeVenue =
@@ -126,6 +144,9 @@ export function parseLocation(text: string): ParsedLocation {
     if (looksLikeVenue && remaining.length > 1) {
       venue_name = first;
       address = remaining.slice(1).join(", ");
+    } else if (looksLikeVenue) {
+      // Single token, looks like a venue name — venue with no street address.
+      venue_name = first;
     } else {
       address = remaining.join(", ");
     }

@@ -201,9 +201,20 @@ async function main(): Promise<void> {
   // Collect unique venues for batched geocoding pass 2. Track ALL raw_event
   // ids sharing each venue so we can FK-link them to the venue row after
   // upsert (AIDI 2026-04-25 Phase 3 gate item #1).
+  // Also carry parsed parts so the venue row stores the canonical
+  // venue_name + city (not the fragmenting raw text).
   const venueQueue = new Map<
     string,
-    { fingerprint: string; venue_text: string; raw_event_ids: number[] }
+    {
+      fingerprint: string;
+      /** Canonical venue display name from parser; falls back to first comma chunk. */
+      canonical_name: string;
+      /** Canonical city from parser; empty when not extractable. */
+      canonical_city: string;
+      /** Original raw text — passed to geocoder for full address detail. */
+      venue_text: string;
+      raw_event_ids: number[];
+    }
   >();
 
   const updateRawStatus = db.prepare(
@@ -307,14 +318,32 @@ async function main(): Promise<void> {
     totals.classify_loadable += 1;
 
     // ─── Queue venue for geocoding pass ───
+    // AIDI 2026-04-25 root-cause fix: parse-location FIRST, then fingerprint
+    // by parsed venue_name + city (Harvey's pattern from harvester/scripts/
+    // gcal-harvest.ts:723). Keying on raw text was fragmenting venues 5-10x;
+    // 10 real venues became 101 in slc-wasatch. With this fix, expect
+    // venues_total to drop to Harvey's ~10-30 range and geocode rate to climb.
     if (row.raw_location_text) {
-      const fp = fingerprintVenue({ name: row.raw_location_text });
+      const parsed = parseLocation(row.raw_location_text);
+      // venue_name is null when the text starts with a digit (no venue
+      // prefix, just an address); city is null when no commas. Best-effort
+      // fallbacks: use first comma-chunk as name when parser returned none;
+      // empty string for city is acceptable (dedups within unknown bucket).
+      const canonicalName = parsed.venue_name
+        ?? row.raw_location_text.split(",")[0]?.trim()
+        ?? row.raw_location_text;
+      const canonicalCity = parsed.city ?? "";
+      const fp = fingerprintVenue({ name: canonicalName, city: canonicalCity });
       const existing = venueQueue.get(fp);
       if (existing) {
         existing.raw_event_ids.push(row.id);
       } else {
         venueQueue.set(fp, {
           fingerprint: fp,
+          canonical_name: canonicalName,
+          canonical_city: canonicalCity,
+          // Pass raw text downstream so geocoder still has full address
+          // detail for query construction; only the FINGERPRINT is parsed.
           venue_text: row.raw_location_text,
           raw_event_ids: [row.id],
         });
@@ -343,16 +372,21 @@ async function main(): Promise<void> {
   if (opts.retryFailedVenues) {
     const failedRows = db
       .prepare(`
-        SELECT fingerprint, name FROM venues
+        SELECT fingerprint, name, city FROM venues
         WHERE geocode_status = 'failed'
         ORDER BY id
       `)
-      .all() as unknown as { fingerprint: string; name: string }[];
+      .all() as unknown as { fingerprint: string; name: string; city: string | null }[];
     let requeued = 0;
     for (const r of failedRows) {
       if (!venueQueue.has(r.fingerprint)) {
         venueQueue.set(r.fingerprint, {
           fingerprint: r.fingerprint,
+          canonical_name: r.name,
+          canonical_city: r.city ?? "",
+          // For retry, we don't have the original raw_text; use the parsed
+          // name as the geocoder query (still works via parse-location's
+          // raw_text fallback).
           venue_text: r.name,
           raw_event_ids: [], // retry context — not tied to specific events
         });
@@ -368,9 +402,12 @@ async function main(): Promise<void> {
   }
 
   // ─── Pass 2: Geocode unique venues (rate-limited; cap by --max-geocodes) ───
+  // venues.name now stores the CANONICAL parsed venue_name (was raw_text).
+  // venues.city stores the parsed city. This makes dedup state visible from
+  // the table directly — debugging shows real venue counts not text variants.
   const upsertVenue = db.prepare(`
-    INSERT INTO venues (fingerprint, name, lat, lng, country, geocode_source, geocode_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO venues (fingerprint, name, city, lat, lng, country, geocode_source, geocode_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(fingerprint) DO UPDATE SET
       lat = excluded.lat,
       lng = excluded.lng,
@@ -440,7 +477,8 @@ async function main(): Promise<void> {
       if (!opts.dryRun) {
         upsertVenue.run(
           v.fingerprint,
-          v.venue_text,
+          v.canonical_name,
+          v.canonical_city,
           result.lat ?? null,
           result.lng ?? null,
           result.country_code ?? null,
@@ -460,7 +498,8 @@ async function main(): Promise<void> {
       if (!opts.dryRun) {
         upsertVenue.run(
           v.fingerprint,
-          v.venue_text,
+          v.canonical_name,
+          v.canonical_city,
           null, null, null,
           result.source ?? null,
           "failed",
