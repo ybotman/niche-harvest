@@ -214,10 +214,18 @@ M1 is delivered in baby-step phases. Each phase ends with a measurable, reviewab
 
 **Phase 1 gate:** slc-wasatch iCal produces a valid snapshot locally, no Mongo writes, no auth, fully dry-runnable. AIDI reviews snapshot for parity-vs-Harvey's output. **Backbone gate met; geocode-rate gate not yet met.**
 
-### Phase 1.5 — Geocoder + classifier hardening (NEW — added 2026-04-25)
-- [ ] Boost geocode success rate from 55% toward 90%+ — see memory `project_nominatim_geocoder_limits_v1.md` for diagnosis. Likely needs SLC grid-address normalizer or alt geocoder.
-- [ ] Add classifier duration-validation gate (per Porter's CALBEAF-141 + memory `project_classifier_needs_duration_validation.md`) — SHORT-category events with duration >=24h should re-classify or emit `quality_flag: duration_violation` not load as Milonga.
-- [ ] Resolve `Q-AI-01-RECONFIRM` with AIDI before Phase 3 (90% loadable-rate denominator semantics).
+### Phase 1.5 — Classifier hardening + total_state (DONE 2026-04-25)
+- [x] Classifier duration-validation gate (Porter's CALBEAF-141 confirmed pattern; 9 violations now caught on slc-wasatch)
+- [x] Structured Nominatim queries via parse-location.ts (Harvey's pattern)
+- [x] enrich.json emits `total_state` always-populated section (AIDI Phase 1 blocker fix)
+- [x] Schema v2: raw_events.venue_id FK + populate at enrich (AIDI Phase 3 gate item #1)
+- [ ] Resolve `Q-AI-01-RECONFIRM` with AIDI before Phase 3 first live load (90% loadable-rate denominator semantics; Quinn G3)
+
+### Phase 1.5b — Source-data coverage improvements (deferred; not a gate)
+**Reframed per Toby 2026-04-25** (memory `feedback_no_geocode_no_load_100pct_gate`): the gate is 100% — events without geocoded venue cannot load, period, no fallback. Phase 1.5b is about INCREASING the source-coverage rate (more events become loadable), not "hitting a gate." Current slc-wasatch geocode rate ranges 33–55% across runs (Nominatim-variable without cache); remaining failures are real source-data quality issues that go to `quality_flags: geocode_failed` correctly.
+- [ ] Per-niche feed defaults — niche.yaml.sources.X.location_default = {city, state, country} so events with sparse location text inherit the feed's city/state for geocoding
+- [ ] Salt Lake City grid-address normalizer — "1321 E 3300 S" → "1321 East 3300 South Salt Lake City UT" before query
+- [ ] Optional: alternative geocoder (photon.komoot.io free Nominatim mirror) for low-coverage source feeds
 
 ### Phase 2 — Dry-run loader (DONE 2026-04-25)
 - [x] `core/loader/interface.ts` — Loader abstraction + OrganizerDoc + VenueDoc + EventDoc shapes per LOADER-CONTRACT §6
@@ -236,10 +244,25 @@ slc-wasatch dry-run report (`data/tango/snapshots/2026-04-25-load.json`):
 - 171 venue ops: 55 created + 116 existing-dedup
 - quality_flags_this_batch: 9 duration_violation + 49 geocode_failed + 134 skip_class_only + 86 skip_unknown + 3 skip_performance
 
-### Phase 3 — Live TEST write (AIDI greenlight gate)
-- [ ] AIDI-approved live TEST write on slc-wasatch
-- [ ] Post-write parity check vs Porter's current TEST load
-- [ ] 90%+ loadable-rate measurement verified
+### Phase 3 — Live TEST write (AIDI greenlight gate; in progress 2026-04-25)
+**Test isolation:** appId=99 used for all test writes (Toby 2026-04-25). Real tango (appId=1) data untouched. TT FE filters appId=1 so test docs invisible. Cleanup later: `db.events.deleteMany({appId: 99})`.
+
+**Stage 1 — DONE 2026-04-25 (commit b998931):**
+- [x] `core/loader/categories.ts` — anonymous BE cache-warm, name→ObjectId Map
+- [x] `--be-url` + `--categories-appid` + `--appid-override` + `--no-warm-categories` flags wired
+- [x] AIDI gate item #2: categoryFirstId resolves against TEST BE; sample event has real ObjectId (66c4d370a87a956db06c49ea for Practica); `category_id_unknown: 0` on slc-wasatch dry-run
+
+**Stage 2 — Code-complete; awaiting URI auth + AIDI verify report (commits 7395e01, 6014716):**
+- [x] `core/loader/mongo-direct.ts` LOADER-CONTRACT §8.2 hybrid impl (organizer POST + 409 retry, venue POST + AutoMaster + 409 fetch, event direct insertOne with anti-recurrence guard) — PROD-STAY-OUT defense via `confirmTestOnly` constructor opt-in
+- [x] `--mongo-verify` mode wired in load CLI: connects to TEST Mongo, count BEFORE → DryRunLoader pass → count AFTER → diff=0 assertion → `mongo_verify.status: verified_zero_writes`
+- [ ] **Toby explicit auth on TEST Mongo URI use** (Fulton 2026-04-25 discipline call: URI is higher-trust than "Toby authorized writes"; needs explicit per-secret authorization)
+- [ ] Run `--mongo-verify` against TEST; send report to AIDI
+- [ ] AIDI Phase 3 stage 2 greenlight on the zero-writes proof
+- [ ] Add `--live` flag to load CLI that swaps DryRunLoader for MongoDirectLoader
+- [ ] Toby per-run `--live` auth
+- [ ] Run `--live --appid-override=99`; verify inserts at appId=99 + appId=1 untouched
+- [ ] Post-write parity check vs Porter's current TEST load (Q-AI-01-RECONFIRM at this point)
+- [ ] M1 90%+ loadable-rate measurement (note: 100% gate per Toby = events without geocode go to quality_flags; rate is source-quality KPI not gate compliance)
 
 ### Phase 4 — iCal portfolio
 - [ ] All iCal feeds from `harvester/config/gcal-feeds.yaml` supported
