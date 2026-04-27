@@ -252,17 +252,30 @@ slc-wasatch dry-run report (`data/tango/snapshots/2026-04-25-load.json`):
 - [x] `--be-url` + `--categories-appid` + `--appid-override` + `--no-warm-categories` flags wired
 - [x] AIDI gate item #2: categoryFirstId resolves against TEST BE; sample event has real ObjectId (66c4d370a87a956db06c49ea for Practica); `category_id_unknown: 0` on slc-wasatch dry-run
 
-**Stage 2 — Code-complete; awaiting URI auth + AIDI verify report (commits 7395e01, 6014716):**
+**Stage 2 — BUILD COMPLETE; awaiting Toby per-run --live auth (commits through `d8fb6e1`):**
 - [x] `core/loader/mongo-direct.ts` LOADER-CONTRACT §8.2 hybrid impl (organizer POST + 409 retry, venue POST + AutoMaster + 409 fetch, event direct insertOne with anti-recurrence guard) — PROD-STAY-OUT defense via `confirmTestOnly` constructor opt-in
 - [x] `--mongo-verify` mode wired in load CLI: connects to TEST Mongo, count BEFORE → DryRunLoader pass → count AFTER → diff=0 assertion → `mongo_verify.status: verified_zero_writes`
-- [ ] **Toby explicit auth on TEST Mongo URI use** (Fulton 2026-04-25 discipline call: URI is higher-trust than "Toby authorized writes"; needs explicit per-secret authorization)
-- [ ] Run `--mongo-verify` against TEST; send report to AIDI
-- [ ] AIDI Phase 3 stage 2 greenlight on the zero-writes proof
-- [ ] Add `--live` flag to load CLI that swaps DryRunLoader for MongoDirectLoader
-- [ ] Toby per-run `--live` auth
+- [x] **Toby auth on TEST Mongo URI use** (granted 2026-04-25; --mongo-verify ran clean: events 9603 / venues 2135 / organizers 116 unchanged across run)
+- [x] Run `--mongo-verify` against TEST; sent report to AIDI; cleared
+- [x] AIDI Phase 3 stage 2 greenlight (2026-04-25)
+- [x] H11 nh_batch_id wired in denorm.ts; rollback_commands block in report
+- [x] H1/H3 isDiscovered=true filter on Mongo dedup query (mongo-direct.ts)
+- [x] Add `--live` flag to load CLI; 3-gate auth: MONGODB_URI_TEST + NICHE_HARVEST_LIVE=1 + confirmTestOnly. Swaps DryRunLoader → MongoDirectLoader. Verified all 3 fail-fast paths.
+- [x] **Match-or-explain rule documented** (CLAUDE.md hard constraints + memory `feedback_check_existing_team_code_first`); slc-wasatch comparison 185 vs Harvey 303 fully explained (134 Class + 9 duration_violation gated per current spec)
+- [ ] **Toby per-run --live auth** (each run requires explicit "yes go" per PROD-DEPLOY-PROTECTION posture — not standing greenlight)
 - [ ] Run `--live --appid-override=99`; verify inserts at appId=99 + appId=1 untouched
-- [ ] Post-write parity check vs Porter's current TEST load (Q-AI-01-RECONFIRM at this point)
-- [ ] M1 90%+ loadable-rate measurement (note: 100% gate per Toby = events without geocode go to quality_flags; rate is source-quality KPI not gate compliance)
+- [ ] Post-write parity check vs Porter's TEST load
+- [ ] Q-AI-01-RECONFIRM with AIDI before live load (90% loadable-rate denominator semantics)
+- [ ] M1 100%-gate compliance measurement (per Toby 2026-04-25: rate is source-quality KPI; gate is binary)
+
+**Live invocation command (when Toby per-run authorizes):**
+```bash
+cd /Users/tobybalsley/MyDocs/AppDev/MasterCalendar/niche-harvest
+URI=$(grep '"MONGODB_URI_TEST"' ../calendar-be-af/local.settings.json | sed -E 's/.*"MONGODB_URI_TEST": "([^"]+)".*/\1/')
+MONGODB_URI_TEST="$URI" NICHE_HARVEST_LIVE=1 ./run.sh \
+  --niche=tango load --live --appid-override=99 --max-events=500 --samples=10
+# → Expected: writes ~185 events / ~48 venues / 0 organizers at appId=99
+# → Tagged with nh_batch_id; rollback via report's rollback_commands block
 
 ### Phase 4 — iCal portfolio
 - [ ] All iCal feeds from `harvester/config/gcal-feeds.yaml` supported
