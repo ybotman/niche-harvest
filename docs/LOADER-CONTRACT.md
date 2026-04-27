@@ -43,6 +43,7 @@ locked_by: [aidi, fulton, sarah]
 | Silent drops | Forbidden. Every non-loadable event emits a structured `quality_flag` with reason. |
 | Classifier output | `{ categoryFirst, categorySecond, categoryThird, attributes, skipReason }` — `attributes` stays in SQLite, never to MongoDB |
 | Override fields | Loader sets both base field AND `*Override` for `travelWorthy` / `beginnerFriendly` / `forBeginners` |
+| nh_batch_id | Every venue / organizer / event tagged with per-cycle UUID (GUARDRAILS H11). Format: `nh-<niche>-<utc-yyyymmddThhmmss>-<8-char-uuid>`. Rollback = `db.<collection>.deleteMany({nh_batch_id: <id>})`. |
 
 ---
 
@@ -94,6 +95,7 @@ BE computes these at venue create when loader leaves them null. **FE-wins policy
 
 - `isDiscovered: true` (mandatory per Toby 2026-04-19 rule)
 - `discoverySource: "niche-harvest"` (convention)
+- `nh_batch_id: "<run-uuid>"` (GUARDRAILS H11; per-cycle UUID for rollback; format `nh-<niche>-<utc>-<8>`)
 
 ### 3.5 Load mechanism for venues
 
@@ -159,6 +161,7 @@ If an organizer with matching `fullName` already exists with a null/legacy short
 - `event_count` if tracked
 - `isDiscovered: true` (convention for niche-harvest organizers)
 - `discoverySource: "niche-harvest"`
+- `nh_batch_id: "<run-uuid>"` (GUARDRAILS H11)
 
 ### 4.6 Scope note: appId=1 only
 
@@ -225,6 +228,7 @@ This table describes which fields niche-harvest must pre-compute for the direct-
 - `discoverySource: "niche-harvest"` (convention)
 - `trustLevel: "ai_discovered"` (PROCESS.md trust levels)
 - `shortTitle` — truncated title at delimiters (≤40 chars recommended)
+- `nh_batch_id: "<run-uuid>"` (GUARDRAILS H11; per-cycle UUID for rollback)
 
 ---
 
@@ -676,6 +680,7 @@ The 2026-04-17 soft-block incident would have been caught by this mock test. Boo
 | 2026-04-24 | v2: AIDI overseer pass — §6.1 added `masteredCityGeolocation`, dropped `masteredDivisionName` (Porter doesn't write it); §12.1 removed stale "pending" tag; §13.2 delivery path clarified (direct SQLite queue push, no broker); §13.4 organizer-count reconciliation closed | AIDI 2026-04-24 |
 | 2026-04-24 | v3: Fulton BE acceptance pass — corrected `masteredCityGeolocation` source to `masteredcities.location` via cityId lookup (Map batch cache); corrected `venueCityName` source to prefer `masteredCityName` over free-form `city` with `city_unresolved` quality_flag fallback; re-added `masteredDivisionName` (Porter gap; FE filter is live); §3.3 FE-wins wording; §5.5 renamed to clarify HTTP vs direct-Mongo paths; §6.4 category cache-warm pattern via `GET /api/categories?appId=1&limit=500`; Q3 closed | Fulton 2026-04-24 |
 | 2026-04-24 | **LOCKED** — Sarah FE pass clean, confirmed `masteredDivisionName` filter is cold on TT today but include anyway (no change); §5.3 note on `venueCityName`/`masteredCityName` dual-render added. All three reviewers (AIDI/Fulton/Sarah) cleared. Implementation begins against this contract. | Sarah 2026-04-24 |
+| 2026-04-27 | **v4 drift-back per Fulton standing directive** — added `nh_batch_id` field to all three doc shapes (Organizer §4.5, Venue §3.4, Event §5.6) per GUARDRAILS H11. Implementation already shipped (commit `5dc43dc`); drift-back applied here so contract matches code, NOT silent divergence. Format: `nh-<niche>-<utc-yyyymmddThhmmss>-<8-char-uuid>`. Rollback `deleteMany({nh_batch_id: <id>})` is a control surface; team should be aware. State remains `locked`; this is a contract-update-as-tracked-by-changelog, not a re-review trigger. | Narvest drift-back 2026-04-27 |
 
 ---
 

@@ -13,7 +13,7 @@ locked_by: [aidi, fulton]
 
 # niche-harvest — ARCHITECTURE
 
-> **Status: LOCKED 2026-04-25.** AIDI overseer cleared v3 → Fulton loader spot-check accepted v4. Implementation begins against this blueprint; drift returns to this doc, not silent divergence. Owned by Narvest; major changes coordinated with AIDI.
+> **Status: LOCKED 2026-04-25; updated to v5 2026-04-27 (drift-back; state remains locked).** AIDI overseer cleared v3 → Fulton loader spot-check accepted v4 → v5 contract-update-as-changelog reflects post-v4 implementation drift (per Fulton's standing directive: drift returns to doc, not silent divergence). Owned by Narvest; major changes coordinated with AIDI.
 
 > **What this is:** The shape of the code — module boundaries, data model, process model, adapter contract, scheduler, observability, memory budgets. The blueprint M1 implements against.
 
@@ -164,15 +164,21 @@ CREATE INDEX idx_sources_next_check ON sources(next_check_at, enabled) WHERE ena
 CREATE TABLE raw_events (
   id INTEGER PRIMARY KEY,
   source_id INTEGER REFERENCES sources(id),
-  fingerprint TEXT UNIQUE NOT NULL,     -- SHA256(title|date|venue_key) per core/fingerprint.ts
+  fingerprint TEXT UNIQUE NOT NULL,     -- SHA256(sourceName|sourceEventId) per core/fingerprint.ts
   raw_title TEXT, raw_date_text TEXT, raw_location_text TEXT,
   raw_description TEXT, raw_organizer_text TEXT, raw_url TEXT,
   raw_json TEXT,                        -- full scraped payload
   status TEXT DEFAULT 'pending',        -- 'pending' | 'enriched' | 'skipped' | 'error'
   error_message TEXT,
+  -- Schema v2 (2026-04-25, AIDI Phase 3 gate item #1):
+  -- FK to venues row; populated at enrich time after venue upsert. Replaces
+  -- fragile text-match join in load CLI. SQLite ALTER doesn't support FK
+  -- constraints so semantics are enforced by code (linkRawEventVenue helper).
+  venue_id INTEGER,
   discovered_at TEXT DEFAULT (datetime('now')),
   enriched_at TEXT
 );
+CREATE INDEX idx_raw_events_venue ON raw_events(venue_id) WHERE venue_id IS NOT NULL;
 
 -- Enriched events
 CREATE TABLE events (
@@ -695,6 +701,7 @@ Not designed here; land in separate docs when needed.
 | 2026-04-24 | v2: Resolved A1–A4 open questions; added §5.4 crash-recovery codifying phase-level idempotency + orphan cleanup; ready for AIDI overseer pass | Narvest first-principles resolution |
 | 2026-04-25 | v3: AIDI overseer Q1=C — moved `rrule` dev → prod dep (runtime validation per LOADER-CONTRACT §10.3); added `CHECK (event_id IS NOT NULL OR raw_event_id IS NOT NULL)` to `quality_flags`; M1-phase label cleanup in §5.1/§5.2; explicit restart-seed semantics in §5.2 (`next_check_at <= now OR IS NULL`). Issue 3 (Chromium 4GB headroom) is informational — flagged for M1 test plan; §8 8GB-Pi reference remains correct (Toby same-day upgraded to 8GB Vilros kit per memory `project_first_pi_hardware_incoming.md`). | AIDI overseer 2026-04-25 |
 | 2026-04-25 | **v4 + LOCKED**: Fulton loader spot-check — added `mastered_division_name TEXT` to `venues` table (asymmetry fix; otherwise denorm regresses LOADER-CONTRACT §6.1); §3.2 explicit GeoJSON Point serialization at load time (2dsphere silent-reject landmine); §5.4.1 BE 409 response shape spec for venue (existingVenueId + GET round-trip for chain) and organizer (suffix-retry vs lookup-before-create paths distinct); §4 RawEvent shape with `timezone_hint` + `source_rrule` pass-through requirements; §10 dep pins `mongodb ^6.20.0` + `rrule ^2.8.1` to BE majors. Implementation begins. | Fulton spot-check 2026-04-25 |
+| 2026-04-27 | **v5 drift-back per Fulton standing directive** — captures architectural changes shipped in commits since v4 lock. State remains `locked`; this is contract-update-as-changelog, not re-review. Changes: §3.1 `raw_events.venue_id` FK column added (Schema v2 migration; AIDI Phase 3 gate item #1 — replaces text-match join); §10 `js-yaml ^4.1.0` added as production dep (config.ts uses; documented drift from "zero-dep YAML" promise — pure-JS, ARM64-clean, 0.5MB; rolling our own was fragile); `core/geocoder/parse-location.ts` ported from Harvey's `gcal-harvest.ts:513` (structured location parsing + per-niche `location_default` + Harvey's title-fallback); `core/loader/mongo-direct.ts` complete (organizer/venue/event write paths + PROD-STAY-OUT defense); `core/cli/load.ts --live` flag with 3-gate auth (MONGODB_URI_TEST + NICHE_HARVEST_LIVE=1 + confirmTestOnly); GUARDRAILS H11 `nh_batch_id` field on every doc; H3 `isDiscovered: true` filter on Mongo dedup. Categories cache-warm via `core/loader/categories.ts` against TEST BE; `--mongo-verify` mode for zero-writes proof. niche.yaml `location_default` schema field added. All committed; tests green; AIDI cleared Phase 3 stage 2 build. | Narvest drift-back 2026-04-27 |
 
 ---
 
