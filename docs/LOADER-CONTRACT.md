@@ -6,6 +6,7 @@ state: locked
 permanence: long-term
 tags: [type/decision, app/tangotiempo, app/global, product/mongodb, product/geocoding]
 appid: 1
+niche: tango
 reviewers: [aidi, fulton, sarah]
 locked_at: 2026-04-24
 locked_by: [aidi, fulton, sarah]
@@ -390,7 +391,7 @@ If no SHORT → Performance > Trip > Unknown.
 
 For tango (appId=1):
 
-**Eligible:** Festival, Marathon, Encuentro, Workshop, DayWorkshop (LONG or day-workshop).
+**Eligible:** Festival, Marathon, Encuentro, Workshop (LONG). DayWorkshop deprecated by CALBEAF-154 (Fulton 2026-04-27); Workshop now covers the FLEX bucket that DayWorkshop used to inhabit.
 
 **Never travelWorthy:** Class, Milonga, Practica.
 
@@ -400,7 +401,7 @@ Loader sets `travelWorthy: false` explicitly for SHORT categories; loader sets `
 
 For tango (appId=1):
 
-**Eligible categories:** Class, Workshop, DayWorkshop. For any other category, loader sets `forBeginners: false` and `beginnerFriendly: false` (unless explicit friendly-only signals for beginnerFriendly).
+**Eligible categories:** Class, Workshop. DayWorkshop deprecated by CALBEAF-154 (Fulton 2026-04-27); Workshop now covers the FLEX bucket. For any other category, loader sets `forBeginners: false` and `beginnerFriendly: false` (unless explicit friendly-only signals for beginnerFriendly).
 
 **Scope:** tango-only. For future niches, null-leave unless niche semantics are explicitly defined by the niche's frontend owner. Fulton confirmed the classifier hard-skips these fields for non-Tango appIds (`enrichment.js:340`).
 
@@ -681,6 +682,7 @@ The 2026-04-17 soft-block incident would have been caught by this mock test. Boo
 | 2026-04-24 | v3: Fulton BE acceptance pass — corrected `masteredCityGeolocation` source to `masteredcities.location` via cityId lookup (Map batch cache); corrected `venueCityName` source to prefer `masteredCityName` over free-form `city` with `city_unresolved` quality_flag fallback; re-added `masteredDivisionName` (Porter gap; FE filter is live); §3.3 FE-wins wording; §5.5 renamed to clarify HTTP vs direct-Mongo paths; §6.4 category cache-warm pattern via `GET /api/categories?appId=1&limit=500`; Q3 closed | Fulton 2026-04-24 |
 | 2026-04-24 | **LOCKED** — Sarah FE pass clean, confirmed `masteredDivisionName` filter is cold on TT today but include anyway (no change); §5.3 note on `venueCityName`/`masteredCityName` dual-render added. All three reviewers (AIDI/Fulton/Sarah) cleared. Implementation begins against this contract. | Sarah 2026-04-24 |
 | 2026-04-27 | **v4 drift-back per Fulton standing directive** — added `nh_batch_id` field to all three doc shapes (Organizer §4.5, Venue §3.4, Event §5.6) per GUARDRAILS H11. Implementation already shipped (commit `5dc43dc`); drift-back applied here so contract matches code, NOT silent divergence. Format: `nh-<niche>-<utc-yyyymmddThhmmss>-<8-char-uuid>`. Rollback `deleteMany({nh_batch_id: <id>})` is a control surface; team should be aware. State remains `locked`; this is a contract-update-as-tracked-by-changelog, not a re-review trigger. | Narvest drift-back 2026-04-27 |
+| 2026-04-27 | **CALBEAF-154 upstream change** — DayWorkshop deprecated; Workshop now covers the FLEX bucket. Updated §7.5 travelWorthy eligible list (drop DayWorkshop), §7.6 forBeginners eligible list (drop DayWorkshop), §16.5 cross-niche table (same). niche.yaml drift comment also updated. Per AIDI 2026-04-27 ask; Fulton shipped the upstream BE change. State remains `locked` (semantic shift handled upstream by Fulton, not here). | AIDI relay / Fulton CALBEAF-154 2026-04-27 |
 
 ---
 
@@ -693,8 +695,8 @@ Summary of what each niche specifies via its own `niche.yaml` (i.e., what change
 | Valid categoryFirst strings | 10 (7 loadable + 3 skip) | `taxonomy.categories[]` |
 | Duration grouping | SHORT/LONG/NEUTRAL with specific memberships | `taxonomy.categories[].duration_group` |
 | Load targets | 6 default (Class opt-in) | `taxonomy.categories[].loadable` + `loader.load_classes` |
-| travelWorthy eligibility | Festival/Marathon/Encuentro/Workshop/DayWorkshop only | `taxonomy.categories[].travel_worthy_eligible` |
-| forBeginners eligibility | Class/Workshop/DayWorkshop only | `taxonomy.categories[].beginner_eligible` |
+| travelWorthy eligibility | Festival/Marathon/Encuentro/Workshop only (DayWorkshop deprecated by CALBEAF-154) | `taxonomy.categories[].travel_worthy_eligible` |
+| forBeginners eligibility | Class/Workshop only (DayWorkshop deprecated by CALBEAF-154) | `taxonomy.categories[].beginner_eligible` |
 | Identity keywords (tango-or-not gate) | tango, milonga, practica, bandoneon, etc. | `taxonomy.identity_check.*` |
 | Rendered domain attributes | DJ, orchestra, instructor, cost | `taxonomy.rendered_attributes[]` |
 | Geocode country trust list | US/CA/AR/EU | `geocode.trusted_country_codes` |

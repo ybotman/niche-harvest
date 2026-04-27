@@ -73,8 +73,11 @@ taxonomy:
   # `loadable: false` = quality_flag with skip_reason per LOADER-CONTRACT §7.3.
   # Class is opt-in per niche — tango M1 default OFF (matches Porter today).
   #
-  # Drift note (AIDI 2026-04-25 Phase 3 review):
-  #   - BE categories include 'Other' and 'DayWorkshop' not modeled here.
+  # Drift note (AIDI 2026-04-25 Phase 3 review; updated AIDI/Fulton 2026-04-27):
+  #   - BE categories include 'Other' not modeled here.
+  #   - 'DayWorkshop' was deprecated by CALBEAF-154 (Fulton 2026-04-27);
+  #     Workshop now covers the FLEX bucket — niche.yaml stays as-is since
+  #     DayWorkshop was never modeled here anyway.
   #   - 'Performance' below maps to skip_performance at classify time and
   #     never reaches the categoryFirstId resolver — safe today.
   #   - If 'Performance' ever becomes a load target, add 'Other' as its
