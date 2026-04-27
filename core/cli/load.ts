@@ -61,14 +61,21 @@ import {
 interface LoadOpts {
   niche: string;
   /**
-   * --live ENABLES actual writes to Mongo via MongoDirectLoader.
-   * Default: false (DryRunLoader; nothing written). Per GUARDRAILS H6 +
-   * Toby standing rule: requires MONGODB_URI_TEST env + per-run auth.
-   * MongoDirectLoader's confirmTestOnly defense further blocks accidental
-   * PROD writes via typo'd connection string. PROD is BLOCKED entirely
-   * (no NICHE_HARVEST_PROD_OK pathway exists).
+   * --live ENABLES actual writes to Mongo via MongoDirectLoader against
+   * TangoTiempoTest (the BE-routed path: venue + organizer through BE-AF;
+   * events direct-Mongo). Default: false (DryRunLoader). Mutually
+   * exclusive with --playground.
    */
   live: boolean;
+  /**
+   * --playground ENABLES actual writes to the EPHEMERAL playground DB
+   * (Toby 2026-04-27: separate cluster; dropped + remade monthly; safer
+   * than appId=99 isolation because separation is structural). Skips
+   * BE-AF entirely; writes venues + organizers + events all via direct
+   * Mongo. mastered_* fields stay null (no AutoMaster in playground).
+   * Mutually exclusive with --live.
+   */
+  playground: boolean;
   maxEvents: number;
   samples: number;
   beUrl: string;
@@ -92,6 +99,7 @@ function parseCli(argv: string[]): LoadOpts {
   return {
     niche,
     live: args.includes("--live"),
+    playground: args.includes("--playground"),
     maxEvents: numArg(args, "--max-events", 500),
     samples: numArg(args, "--samples", 10),
     beUrl:
@@ -144,7 +152,16 @@ interface MongoVerifyReport {
 interface LoadReport {
   niche: string;
   generated_at: string;
-  loader: "dry-run" | "mongo-direct";
+  loader: "dry-run" | "mongo-direct" | "playground";
+  /**
+   * Toby 2026-04-27 safeguard: explicit single appId target for THIS run.
+   * Every venue/organizer/event in this batch was written with this exact
+   * appId. Code path can't write multiple appIds in one run by design
+   * (effectiveNiche.niche.appid is set ONCE at run start; threaded
+   * uniformly into all doc builders). Surfaced here so operator can
+   * spot-check the report and confirm: "I expected appId=20 → I see 20".
+   */
+  target_appid: number;
   /** GUARDRAILS H11: per-cycle UUID for rollback. Format: nh-<niche>-<utc>-<8>. */
   nh_batch_id: string;
   /** Pre-built rollback command — paste-ready when needed. */
@@ -232,16 +249,18 @@ async function main(): Promise<void> {
 
   const db = openStore(opts.niche);
 
-  // ─── Loader selection: dry-run (default) vs --live ───
-  // Per GUARDRAILS H5 + H6 + Toby standing rule: --live requires:
-  //   (a) MONGODB_URI_TEST env var present (Toby per-secret auth)
-  //   (b) NICHE_HARVEST_LIVE=1 env var present (per-run auth — must be
-  //       set EXPLICITLY by the operator each run, not stored in their
-  //       shell rc file. Defense against accidental --live invocation.)
-  //   (c) MongoDirectLoader.confirmTestOnly: true (PROD-STAY-OUT defense)
-  // Without all 3, --live fails fast with a clear message.
+  // ─── Loader selection: dry-run (default) | --live | --playground ───
+  // Mutually exclusive: --live and --playground refuse to combine.
+  if (opts.live && opts.playground) {
+    fail("--live and --playground are mutually exclusive. Pick one.");
+  }
   let loader: DryRunLoader | MongoDirectLoader;
   if (opts.live) {
+    // --live: writes to TangoTiempoTest via BE-AF + direct Mongo (hybrid)
+    // Per GUARDRAILS H5 + H6 + Toby standing rule: requires:
+    //   (a) MONGODB_URI_TEST env (per-secret auth)
+    //   (b) NICHE_HARVEST_LIVE=1 env (per-run auth)
+    //   (c) confirmTestOnly: true (PROD-STAY-OUT)
     const uri = process.env.MONGODB_URI_TEST;
     const liveOk = process.env.NICHE_HARVEST_LIVE === "1";
     if (!uri) {
@@ -263,12 +282,42 @@ async function main(): Promise<void> {
       confirmTestOnly: true,
     });
     await live.connect();
-    log.warn("--live MODE ACTIVE: writes to TEST Mongo will occur", {
+    log.warn("--live MODE ACTIVE: writes to TangoTiempoTest will occur", {
       uri_db: "TangoTiempoTest",
       appid_override: opts.appidOverride,
-      nh_batch_id: "<assigned next>",
     });
     loader = live;
+  } else if (opts.playground) {
+    // --playground: writes to EPHEMERAL playground DB (Toby 2026-04-27).
+    // Skips BE-AF entirely; everything direct-Mongo. mastered_* null.
+    // Auth gates: MONGODB_URI_PLAYGROUND env + NICHE_HARVEST_PLAYGROUND=1 env.
+    const uri = process.env.MONGODB_URI_PLAYGROUND;
+    const playgroundOk = process.env.NICHE_HARVEST_PLAYGROUND === "1";
+    if (!uri) {
+      fail(
+        "--playground requires MONGODB_URI_PLAYGROUND env var. " +
+          "Per Toby per-secret auth: export when authorized.",
+      );
+    }
+    if (!playgroundOk) {
+      fail(
+        "--playground requires NICHE_HARVEST_PLAYGROUND=1 env var (per-run auth gate). " +
+          "Set explicitly each run.",
+      );
+    }
+    const pg = new MongoDirectLoader({
+      mongoUri: uri,
+      beUrl: opts.beUrl, // ignored in playground mode but kept for forward compat
+      logger: log,
+      confirmTestOnly: true,
+      playgroundMode: true,
+    });
+    await pg.connect();
+    log.warn("--playground MODE ACTIVE: writes to ephemeral playground DB", {
+      cluster: "playground (separate from TT_Test)",
+      note: "BE-AF skipped; direct-Mongo for everything; mastered_* null",
+    });
+    loader = pg;
   } else {
     loader = new DryRunLoader();
   }
@@ -554,8 +603,8 @@ async function main(): Promise<void> {
     }
   }
 
-  // Close MongoDirectLoader cleanly when --live (releases pool)
-  if (opts.live && loader instanceof MongoDirectLoader) {
+  // Close MongoDirectLoader cleanly when --live or --playground (releases pool)
+  if ((opts.live || opts.playground) && loader instanceof MongoDirectLoader) {
     await loader.close();
   }
 
@@ -666,7 +715,8 @@ async function main(): Promise<void> {
   const report: LoadReport = {
     niche: opts.niche,
     generated_at: new Date().toISOString(),
-    loader: opts.live ? "mongo-direct" : "dry-run",
+    loader: opts.playground ? "playground" : opts.live ? "mongo-direct" : "dry-run",
+    target_appid: appIdInUse,
     nh_batch_id: nhBatchId,
     rollback_commands: {
       events: `db.events.deleteMany({nh_batch_id: "${nhBatchId}"})`,

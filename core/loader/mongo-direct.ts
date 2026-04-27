@@ -32,16 +32,18 @@ import type {
 import type { Logger } from "../types.ts";
 
 export interface MongoDirectOpts {
-  /** Mongo connection string (TEST only; PROD-STAY-OUT). */
+  /** Mongo connection string (TEST or PLAYGROUND; PROD-STAY-OUT). */
   mongoUri: string;
-  /** BE base URL, e.g. "https://calendarbeaf-test.azurewebsites.net" */
+  /** BE base URL, e.g. "https://calendarbeaf-test.azurewebsites.net".
+   *  IGNORED in playground mode (BE doesn't exist for playground; we
+   *  write venues + organizers directly to Mongo there). */
   beUrl: string;
   /** Logger from caller */
   logger: Logger;
   /**
    * Defense-in-depth: refuse to construct unless caller explicitly
-   * confirms TEST-only intent. PROD writes from this loader are
-   * forbidden without re-authorization per LOADER-CONTRACT §8.5.
+   * confirms TEST-or-PLAYGROUND-only intent. PROD writes from this loader
+   * are forbidden without re-authorization per LOADER-CONTRACT §8.5.
    */
   confirmTestOnly: true;
   /**
@@ -55,6 +57,15 @@ export interface MongoDirectOpts {
    * doesn't use bulk cache); keep here for forward compat.
    */
   beApiKey?: string;
+  /**
+   * Playground mode: skip BE-AF venue/organizer POST endpoints; write
+   * EVERYTHING (events + venues + organizers) directly to Mongo.
+   * Playground DB has no BE-AF instance; mastered_* chain stays null
+   * (no AutoMaster). Used for ephemeral verification cluster.
+   * Toby 2026-04-27: safer than appId=99 isolation because separation
+   * is structural (different DB) not procedural (filter discipline).
+   */
+  playgroundMode?: boolean;
 }
 
 export class MongoDirectLoader implements Loader {
@@ -67,6 +78,7 @@ export class MongoDirectLoader implements Loader {
 
   private mongoClient: MongoClient | null = null;
   private db: Db | null = null;
+  private readonly playgroundMode: boolean;
 
   // Counters per LoadCounts contract
   private organizers_attempted = 0;
@@ -90,6 +102,12 @@ export class MongoDirectLoader implements Loader {
     this.beUrl = opts.beUrl.replace(/\/+$/, "");
     this.logger = opts.logger;
     this.shortNameRetryCap = opts.shortNameRetryCap ?? 5;
+    this.playgroundMode = opts.playgroundMode ?? false;
+    if (this.playgroundMode) {
+      this.logger.warn("MongoDirectLoader playground mode active", {
+        note: "BE-AF venue/organizer POSTs SKIPPED; direct-Mongo for everything; mastered_* fields will be null",
+      });
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -138,6 +156,29 @@ export class MongoDirectLoader implements Loader {
 
   async upsertOrganizer(doc: OrganizerDoc): Promise<ObjectId | string> {
     this.organizers_attempted += 1;
+
+    // ─── Playground mode: direct-Mongo write; no BE-AF round-trip ───
+    if (this.playgroundMode) {
+      if (!this.db) throw new Error("playground upsertOrganizer: not connected");
+      // Lookup by normalized fullName (case-insensitive) within the same appId
+      const existing = await this.db
+        .collection("organizers")
+        .findOne(
+          { fullName: doc.fullName, appId: doc.appId, isDiscovered: true },
+          { projection: { _id: 1 } },
+        );
+      if (existing) {
+        this.organizers_existing += 1;
+        return existing._id;
+      }
+      const result = await this.db.collection("organizers").insertOne({
+        ...doc,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      this.organizers_created += 1;
+      return result.insertedId;
+    }
 
     // §4.3 lookup-before-create: check if organizer with this fullName
     // already exists. We use a GET-by-fullName query (BE-AF supports
@@ -209,6 +250,38 @@ export class MongoDirectLoader implements Loader {
   }> {
     this.venues_attempted += 1;
 
+    // ─── Playground mode: direct-Mongo write; mastered chain stays null ───
+    if (this.playgroundMode) {
+      if (!this.db) throw new Error("playground upsertVenue: not connected");
+      // Dedup by (name, city, appId, isDiscovered) within playground
+      const existing = await this.db
+        .collection("venues")
+        .findOne(
+          { name: doc.name, city: doc.city, appId: doc.appId, isDiscovered: true },
+          { projection: { _id: 1 } },
+        );
+      if (existing) {
+        this.venues_existing += 1;
+        return { venueId: existing._id, masteredChain: this.nullMasteredChain() };
+      }
+      const result = await this.db.collection("venues").insertOne({
+        ...doc,
+        // Build a GeoJSON Point from lat/lng (BE does this on real path)
+        geolocation: { type: "Point", coordinates: [doc.longitude, doc.latitude] },
+        // mastered_* + timezone left null in playground (no AutoMaster)
+        timezone: null,
+        masteredCityId: null, masteredCityName: null,
+        masteredDivisionId: null, masteredDivisionName: null,
+        masteredRegionId: null, masteredRegionName: null,
+        masteredCountryId: null, masteredCountryName: null,
+        masteringStatus: "PLAYGROUND_NO_AUTOMASTER",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      this.venues_created += 1;
+      return { venueId: result.insertedId, masteredChain: this.nullMasteredChain() };
+    }
+
     const result = await this.postJson<VenuePostResponse>("/api/venues", doc);
 
     if (result.status === 201 && "venue" in result.body && result.body.venue) {
@@ -240,6 +313,28 @@ export class MongoDirectLoader implements Loader {
     throw new Error(
       `venue POST failed (${result.status}): ${JSON.stringify(result.body).slice(0, 200)}`,
     );
+  }
+
+  /**
+   * Playground-mode helper: returns an all-null mastered chain since
+   * there's no AutoMaster service to run against the playground DB.
+   * Events written in playground mode reference null mastered_* fields;
+   * acceptable for verification of the LOAD CHAIN; FE rendering of these
+   * specific events is undefined and not the subject of playground tests.
+   */
+  private nullMasteredChain(): VenueMasteredChainResponse {
+    return {
+      timezone: null,
+      geolocation: null,
+      masteredCityId: null,
+      masteredCityName: null,
+      masteredDivisionId: null,
+      masteredDivisionName: null,
+      masteredRegionId: null,
+      masteredRegionName: null,
+      masteredCountryId: null,
+      masteredCountryName: null,
+    };
   }
 
   private async fetchVenueById(id: string): Promise<VenueResponseShape | null> {
