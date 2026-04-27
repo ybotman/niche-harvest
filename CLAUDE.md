@@ -69,6 +69,8 @@ Narvest owns `niche-harvest/` entirely — all code, config, docs, tests, deploy
 
 ## Hard constraints (standing rules, never negotiable without Toby)
 
+- **Match-or-explain rule** — niche-harvest is a REBUILD of the existing pipeline (Harvey/Booker/Porter). Output measures MUST match or exceed the existing pipeline for the same source, OR have a defensible spec-cited reason for the divergence. Process: pull existing numbers FIRST, compare, classify gap as `(a) stricter gating per current spec` (defensible; document citation) or `(b) regression` (fix). Document the comparison explicitly. Applies to Harvey/Booker/Porter when re-engineering each. Memory: `feedback_check_existing_team_code_first.md`.
+- **Check existing team code FIRST** — when AIDI/Sarah/Fulton flag a measure as suspicious, the answer is in Porter/Harvey/Booker actual code + actual data, NOT my first-principles reasoning. Don't reinvent the wheel; read the wheel. Memory: `feedback_check_existing_team_code_first.md`.
 - **FTPNTD** — Fix The Process, Not The Data. Bug in output = fix upstream transform, not output record.
 - **No fallback location fields** — geocode fail → null. Never substitute nearest-city, country, or defaults.
 - **No silent drops** — every skip/rejection emits a structured signal with reason.

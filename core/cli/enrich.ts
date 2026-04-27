@@ -372,6 +372,68 @@ async function main(): Promise<void> {
     }
   }
 
+  // ─── Pass 1.5: title-fallback (Harvey gcal-harvest:findVenueInTitle) ───
+  // For events whose location text was address-only (parser couldn't extract
+  // a venue_name → canonical_name fell back to first comma chunk = the
+  // address itself), scan the EVENT TITLE for any known real venue name
+  // from other entries in venueQueue. If found, MOVE the event into that
+  // venue's queue entry. Result: addresses-without-venues that share a
+  // title pattern with known venues get deduped instead of fragmenting.
+  //
+  // "Real" venue name = starts with letter, length > 3, no digit-leading.
+  // Sort longest-first so "DF Dance Studio" matches before partial "DF".
+  const realVenueNames: { name: string; fingerprint: string }[] = [];
+  for (const v of venueQueue.values()) {
+    const isReal =
+      /^[A-Za-z]/.test(v.canonical_name) &&
+      !/^\d/.test(v.canonical_name) &&
+      v.canonical_name.length > 3;
+    if (isReal) {
+      realVenueNames.push({ name: v.canonical_name, fingerprint: v.fingerprint });
+    }
+  }
+  realVenueNames.sort((a, b) => b.name.length - a.name.length);
+
+  // Index raw_title by raw_event id for O(1) lookup during the fallback pass
+  const titleByEventId = new Map<number, string>();
+  for (const r of rows) titleByEventId.set(r.id, r.raw_title);
+
+  let titleMatchedEvents = 0;
+  let venuesConsolidated = 0;
+  // Iterate a copy of entries so we can mutate venueQueue mid-loop.
+  for (const [addressFp, addressV] of [...venueQueue.entries()]) {
+    // Skip real venues (only address-only entries get title-fallback)
+    if (realVenueNames.some((r) => r.fingerprint === addressFp)) continue;
+    const remainingEventIds: number[] = [];
+    for (const eventId of addressV.raw_event_ids) {
+      const title = (titleByEventId.get(eventId) ?? "").toLowerCase();
+      const match = realVenueNames.find((r) => title.includes(r.name.toLowerCase()));
+      if (match) {
+        // Move this event to the matched real venue
+        const target = venueQueue.get(match.fingerprint);
+        if (target) {
+          target.raw_event_ids.push(eventId);
+          titleMatchedEvents += 1;
+        }
+      } else {
+        remainingEventIds.push(eventId);
+      }
+    }
+    if (remainingEventIds.length === 0) {
+      // All events moved → delete the address-only entry
+      venueQueue.delete(addressFp);
+      venuesConsolidated += 1;
+    } else {
+      addressV.raw_event_ids = remainingEventIds;
+    }
+  }
+  log.info("title-fallback done", {
+    real_venue_candidates: realVenueNames.length,
+    events_remapped_to_real_venue: titleMatchedEvents,
+    address_only_venues_consolidated: venuesConsolidated,
+    venues_after: venueQueue.size,
+  });
+
   totals.unique_venues = venueQueue.size;
   log.info("identity+classify done", {
     identity_pass: totals.identity_pass,
