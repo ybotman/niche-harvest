@@ -45,6 +45,12 @@ import {
 } from "../loader/denorm.ts";
 import { DryRunLoader } from "../loader/dry-run.ts";
 import { MongoDirectLoader } from "../loader/mongo-direct.ts";
+import type {
+  EventDoc,
+  OrganizerDoc,
+  VenueDoc,
+  VenueMasteredChainResponse,
+} from "../loader/interface.ts";
 import {
   warmCategories,
   resolveCategoryId,
@@ -54,7 +60,15 @@ import {
 
 interface LoadOpts {
   niche: string;
-  dryRun: boolean; // accepted for forward-compat; Phase 2 is always dry-run
+  /**
+   * --live ENABLES actual writes to Mongo via MongoDirectLoader.
+   * Default: false (DryRunLoader; nothing written). Per GUARDRAILS H6 +
+   * Toby standing rule: requires MONGODB_URI_TEST env + per-run auth.
+   * MongoDirectLoader's confirmTestOnly defense further blocks accidental
+   * PROD writes via typo'd connection string. PROD is BLOCKED entirely
+   * (no NICHE_HARVEST_PROD_OK pathway exists).
+   */
+  live: boolean;
   maxEvents: number;
   samples: number;
   beUrl: string;
@@ -77,7 +91,7 @@ function parseCli(argv: string[]): LoadOpts {
   if (!niche) fail("Missing --niche=<key>");
   return {
     niche,
-    dryRun: true, // Phase 2 hardwired
+    live: args.includes("--live"),
     maxEvents: numArg(args, "--max-events", 500),
     samples: numArg(args, "--samples", 10),
     beUrl:
@@ -130,7 +144,7 @@ interface MongoVerifyReport {
 interface LoadReport {
   niche: string;
   generated_at: string;
-  loader: "dry-run";
+  loader: "dry-run" | "mongo-direct";
   /** GUARDRAILS H11: per-cycle UUID for rollback. Format: nh-<niche>-<utc>-<8>. */
   nh_batch_id: string;
   /** Pre-built rollback command — paste-ready when needed. */
@@ -175,9 +189,9 @@ interface LoadReport {
   quality_flags_this_batch: Record<string, number>;
   /** AIDI expectation #1: full §6 doc shape verifiable from samples alone */
   sample_documents: {
-    organizers: ReturnType<DryRunLoader["capturedOrganizers"]["slice"]>;
-    venues: ReturnType<DryRunLoader["capturedVenues"]["slice"]>;
-    events: ReturnType<DryRunLoader["capturedEvents"]["slice"]>;
+    organizers: { doc: OrganizerDoc; resolvedId: string | object }[];
+    venues: { doc: VenueDoc; resolvedId: string | object; masteredChain: VenueMasteredChainResponse }[];
+    events: { doc: EventDoc; resolvedId: string | object; status: string; detail?: string }[];
   };
 }
 
@@ -217,7 +231,54 @@ async function main(): Promise<void> {
   }
 
   const db = openStore(opts.niche);
-  const loader = new DryRunLoader();
+
+  // ─── Loader selection: dry-run (default) vs --live ───
+  // Per GUARDRAILS H5 + H6 + Toby standing rule: --live requires:
+  //   (a) MONGODB_URI_TEST env var present (Toby per-secret auth)
+  //   (b) NICHE_HARVEST_LIVE=1 env var present (per-run auth — must be
+  //       set EXPLICITLY by the operator each run, not stored in their
+  //       shell rc file. Defense against accidental --live invocation.)
+  //   (c) MongoDirectLoader.confirmTestOnly: true (PROD-STAY-OUT defense)
+  // Without all 3, --live fails fast with a clear message.
+  let loader: DryRunLoader | MongoDirectLoader;
+  if (opts.live) {
+    const uri = process.env.MONGODB_URI_TEST;
+    const liveOk = process.env.NICHE_HARVEST_LIVE === "1";
+    if (!uri) {
+      fail(
+        "--live requires MONGODB_URI_TEST env var. " +
+          "Per Toby per-secret auth: export this only when authorized for THIS run.",
+      );
+    }
+    if (!liveOk) {
+      fail(
+        "--live requires NICHE_HARVEST_LIVE=1 env var (per-run auth gate). " +
+          "Set explicitly each run; do NOT bake into shell rc files.",
+      );
+    }
+    const live = new MongoDirectLoader({
+      mongoUri: uri,
+      beUrl: opts.beUrl,
+      logger: log,
+      confirmTestOnly: true,
+    });
+    await live.connect();
+    log.warn("--live MODE ACTIVE: writes to TEST Mongo will occur", {
+      uri_db: "TangoTiempoTest",
+      appid_override: opts.appidOverride,
+      nh_batch_id: "<assigned next>",
+    });
+    loader = live;
+  } else {
+    loader = new DryRunLoader();
+  }
+
+  // Caller-side sample capture — works in BOTH modes (was DryRunLoader-only).
+  // AIDI needs to inspect would-be / did-be docs in the report regardless
+  // of which loader handled the writes. Cap at opts.samples.
+  const capturedOrganizers: { doc: OrganizerDoc; resolvedId: string | object }[] = [];
+  const capturedVenues: { doc: VenueDoc; resolvedId: string | object; masteredChain: VenueMasteredChainResponse }[] = [];
+  const capturedEvents: { doc: EventDoc; resolvedId: string | object; status: string; detail?: string }[] = [];
 
   // ─── GUARDRAILS H11: per-cycle batch_id for rollback ───
   // Format: nh-<niche>-<utc-yyyymmddThhmmss>-<8-char-uuid-suffix>
@@ -422,6 +483,9 @@ async function main(): Promise<void> {
       if (orgDoc) {
         const id = await loader.upsertOrganizer(orgDoc);
         ownerOrganizerID = String(id);
+        if (capturedOrganizers.length < opts.samples) {
+          capturedOrganizers.push({ doc: orgDoc, resolvedId: id });
+        }
       }
     }
 
@@ -438,6 +502,9 @@ async function main(): Promise<void> {
     };
     const venueDoc = buildVenueDoc(venueRow, effectiveNiche, nhBatchId);
     const { venueId, masteredChain } = await loader.upsertVenue(venueDoc);
+    if (capturedVenues.length < opts.samples) {
+      capturedVenues.push({ doc: venueDoc, resolvedId: venueId, masteredChain });
+    }
 
     // ─── 3. categoryFirstId resolution from cache (LOADER §6.4) ───
     let categoryFirstId: string | null = null;
@@ -476,7 +543,20 @@ async function main(): Promise<void> {
       categoryFirstId: categoryFirstId,
       nhBatchId,
     });
-    await loader.insertEvent(eventDoc);
+    const evResult = await loader.insertEvent(eventDoc);
+    if (capturedEvents.length < opts.samples) {
+      capturedEvents.push({
+        doc: eventDoc,
+        resolvedId: evResult.eventId,
+        status: evResult.status,
+        ...(evResult.detail ? { detail: evResult.detail } : {}),
+      });
+    }
+  }
+
+  // Close MongoDirectLoader cleanly when --live (releases pool)
+  if (opts.live && loader instanceof MongoDirectLoader) {
+    await loader.close();
   }
 
   // ─── Cumulative state queries ───
@@ -586,7 +666,7 @@ async function main(): Promise<void> {
   const report: LoadReport = {
     niche: opts.niche,
     generated_at: new Date().toISOString(),
-    loader: "dry-run",
+    loader: opts.live ? "mongo-direct" : "dry-run",
     nh_batch_id: nhBatchId,
     rollback_commands: {
       events: `db.events.deleteMany({nh_batch_id: "${nhBatchId}"})`,
@@ -619,9 +699,9 @@ async function main(): Promise<void> {
     total_state: totalState,
     quality_flags_this_batch: qfThisBatch,
     sample_documents: {
-      organizers: loader.capturedOrganizers.slice(0, opts.samples),
-      venues: loader.capturedVenues.slice(0, opts.samples),
-      events: loader.capturedEvents.slice(0, opts.samples),
+      organizers: capturedOrganizers,
+      venues: capturedVenues,
+      events: capturedEvents,
     },
   };
 
