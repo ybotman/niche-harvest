@@ -298,6 +298,34 @@ MONGODB_URI_TEST="$URI" NICHE_HARVEST_LIVE=1 ./run.sh \
 - [ ] AIDI greenlight → smoke batch (2 groups / 5 events)
 - [ ] Post-smoke review → full quota (5 groups / 50 events per day)
 
+### Mission 2 design intent — sandbox SQLite for discovery (Toby 2026-04-27 captured-not-yet-built)
+
+When M2 (Discovery engine) starts, niche-harvest must have a **playground / sandbox SQLite** for discovery operations BEFORE candidates promote to live niche.yaml entries. Already a GUARDRAILS S5 commitment ("New auto-discovery queue processes MUST use a sandbox SQLite first; team review before promotion to TEST").
+
+**Pattern (not yet built):**
+- New file: `data/<niche>/discovery-sandbox.sqlite` — separate from `harvest.sqlite`
+- Tables: `candidate_sources` (URLs found by gap-analysis), `search_results` (raw web/FB queries), `hitl_queue` (awaiting operator approve/reject), `rejected_candidates` (for not-re-trying)
+- Operator workflow: discovery process populates sandbox → operator reviews via dashboard or CLI → approved candidates get promoted to `niches/<niche>/niche.yaml` as new source entries → live pipeline picks them up on next snapshot
+- Promotion is a HITL gate; no candidate goes live without explicit operator approval (GUARDRAILS G1 + S5)
+- Cross-pipeline parallel: same pattern as production playground Mongo (separation is structural, not procedural)
+
+**Why captured-not-built today:** M2 starts after M1 closes. Capturing here so the design assumption (sandbox SQLite + promotion-gate-via-HITL) is locked. No engineering, just architectural intent.
+
+### Phase 8 design intent (Toby 2026-04-27 captured-not-yet-built)
+
+The error/repair feedback loop is M1-required design intent (not built; design assumption captured here so future sessions don't re-derive):
+
+**Pattern:** Harvey → Porter today emits CALBEAF-141 hub signals when ≥N events fail same gate. Operator/AIDI evaluates → asks for fix → Harvey implements → memory captures lesson for future sources. niche-harvest must mirror this:
+- **Threshold-based signal emission**: when ≥N events fail same `quality_flag.reason` in a run, emit hub message to AIDI with reason + sample events + run/batch context (CALBEAF-141 shape)
+- **Per-event retry queue**: failed Mongo writes go to a retry table; next cycle re-attempts (capped retry_count); after cap → quality_flag with reason `unclassified_failure` + alert
+- **Cross-batch repair**: when venue's mastered chain re-resolves upstream, existing events should pick up new value (re-sync mechanism; bounded by `nh_batch_id` window)
+- **Lesson-learned cross-niche/source**: when a failure pattern repeats (e.g., SLC grid-address fragmentation surfaces in slc-wasatch → applies to denver-9, denver-10 etc.) — auto-surface via memory + cross-niche.yaml learnings catalog
+- **Re-attempt on previously-failed venues**: today's `--retry-failed-venues` flag is manual; should automate per-cycle when geocoder logic improves
+
+**Process pattern (Toby 2026-04-27):** LLM-heavy at design + acceptance + signal evaluation; deterministic at runtime. niche-harvest's hot path is deterministic; signal-emission threshold + retry/repair logic is deterministic; only the EVALUATION-OF-SIGNAL is LLM (operator/AIDI asks for fix, applies, captures lesson).
+
+**Why captured-not-built today:** M1 first --live needs to happen first to surface what Phase 8 must actually handle. Design by observation > design by speculation. But the assumption that Phase 8 will exist and follow this pattern is locked here so future Narvest sessions don't re-derive.
+
 ### Phase 7 — Scheduler / autonomous loop
 - [ ] `core/engine/scheduler.ts` — self-scheduling driven by `next_check_at`
 - [ ] 24h unattended laptop run producing expected deltas
