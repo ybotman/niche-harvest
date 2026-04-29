@@ -120,11 +120,11 @@ test("classify — defaults to Unknown when no category keyword present", () => 
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// classify — duration validation (LOADER-CONTRACT §7.2 hard rules)
-// Critical: catches Porter's CALBEAF-141 pattern (SHORT+96h Milongas)
+// classify — duration flags (LOADER-CONTRACT §7.2 Harvey 2026-04-29)
+// Soft flags replace hard drops. Re-assignment logic tested here.
 // ─────────────────────────────────────────────────────────────────────
 
-test("classify — SHORT category + duration >=24h → short_with_long_duration", () => {
+test("classify — SHORT+≥24h re-assigns to Workshop (no LONG keyword)", () => {
   const c = classify(
     ev("Milonga Weekend", {
       start_dt_iso: "2026-05-29T19:00:00",
@@ -132,38 +132,110 @@ test("classify — SHORT category + duration >=24h → short_with_long_duration"
     }),
     tangoNiche,
   );
-  assert.equal(c.category_first, "Milonga");
-  assert.notEqual(c.duration_violation, null);
-  assert.equal(c.duration_violation?.kind, "short_with_long_duration");
+  // Re-assigned from Milonga to Workshop; still loadable
+  assert.equal(c.category_first, "Workshop");
+  assert.equal(c.skip_reason, null);
+  assert.notEqual(c.duration_flag, null);
+  assert.equal(c.duration_flag?.kind, "duration_reassigned");
+  assert.ok(c.duration_flag?.original_category === "Milonga");
   assert.equal(c.duration_hours, 72);
 });
 
-test("classify — LONG category + duration <24h → long_with_short_duration", () => {
+test("classify — LONG keyword in title + ≥24h → LONG wins normally (no re-assign needed)", () => {
   const c = classify(
-    ev("Tomas Howlin Workshop Weekend", {
+    ev("Milonga Festival Weekend", {
+      start_dt_iso: "2026-05-29T19:00:00",
+      end_dt_iso: "2026-06-01T19:00:00", // 72h
+    }),
+    tangoNiche,
+  );
+  // Festival (LONG) keyword wins via LONG branch; 72h is within Festival ceiling
+  // (240h); no flag needed — duration confirms LONG classification.
+  assert.equal(c.category_first, "Festival");
+  assert.equal(c.duration_flag, null);
+});
+
+test("classify — Case B: LONG+SHORT keywords + duration < 24h → SHORT wins (no flag)", () => {
+  const c = classify(
+    ev("Saturday Milonga Marathon", {
       start_dt_iso: "2026-05-29T19:00:00",
       end_dt_iso: "2026-05-30T00:00:00", // 5h
     }),
     tangoNiche,
   );
-  assert.equal(c.category_first, "Workshop");
-  assert.notEqual(c.duration_violation, null);
-  assert.equal(c.duration_violation?.kind, "long_with_short_duration");
+  // Marathon (LONG) + Milonga (SHORT) in title + 5h < 24h → Case B, SHORT wins
+  // Duration-guided disambiguation is correct; no flag needed.
+  assert.equal(c.category_first, "Milonga");
+  assert.equal(c.duration_flag, null);
 });
 
-test("classify — duration > 168h triggers exceeds_max_duration", () => {
+test("classify — LONG+<24h keeps LONG with flag when no SHORT keyword", () => {
   const c = classify(
-    ev("Long Festival", {
-      start_dt_iso: "2026-05-01T00:00:00",
-      end_dt_iso: "2026-05-15T00:00:00", // 14 days
+    ev("Tango Workshop", {
+      start_dt_iso: "2026-05-29T19:00:00",
+      end_dt_iso: "2026-05-30T00:00:00", // 5h
     }),
     tangoNiche,
   );
-  assert.notEqual(c.duration_violation, null);
-  assert.equal(c.duration_violation?.kind, "exceeds_max_duration");
+  // Workshop (LONG) + 5h, no SHORT keyword → keep Workshop + flag
+  assert.equal(c.category_first, "Workshop");
+  assert.equal(c.skip_reason, null); // still loadable
+  assert.equal(c.duration_flag?.kind, "duration_reassigned");
 });
 
-test("classify — SHORT category at exactly 24h DOES violate (rule is >=)", () => {
+test("classify — Case B: LONG+SHORT keywords (singular) + duration < 24h → SHORT wins", () => {
+  const c = classify(
+    ev("Spring Tango Festival with Milonga", {
+      start_dt_iso: "2026-05-29T19:00:00",
+      end_dt_iso: "2026-05-30T01:00:00", // 6h — clearly SHORT duration
+    }),
+    tangoNiche,
+  );
+  // "Festival" (LONG) and "Milonga" (SHORT, singular — plural 'Milongas' doesn't
+  // match \bMilonga\b word boundary) + 6h < 24h → Case B, SHORT wins; no flag.
+  assert.equal(c.category_first, "Milonga");
+  assert.equal(c.duration_flag, null);
+});
+
+test("classify — per-category ceiling: Festival > 240h → ceiling flag (still loads)", () => {
+  const c = classify(
+    ev("Huge Tango Festival", {
+      start_dt_iso: "2026-05-01T00:00:00",
+      end_dt_iso: "2026-05-12T00:00:00", // 264h
+    }),
+    tangoNiche,
+  );
+  assert.equal(c.category_first, "Festival");
+  assert.equal(c.skip_reason, null); // still loadable
+  assert.equal(c.duration_flag?.kind, "duration_ceiling_exceeded");
+});
+
+test("classify — per-category ceiling: Festival at 200h is within ceiling (no flag)", () => {
+  const c = classify(
+    ev("Long Tango Festival", {
+      start_dt_iso: "2026-05-01T00:00:00",
+      end_dt_iso: "2026-05-09T08:00:00", // 200h
+    }),
+    tangoNiche,
+  );
+  assert.equal(c.category_first, "Festival");
+  assert.equal(c.duration_flag, null);
+});
+
+test("classify — per-category ceiling: Marathon > 120h → ceiling flag", () => {
+  const c = classify(
+    ev("8-Day Buenos Aires Tango Marathon", {
+      start_dt_iso: "2026-05-01T00:00:00",
+      end_dt_iso: "2026-05-07T00:00:00", // 144h
+    }),
+    tangoNiche,
+  );
+  assert.equal(c.category_first, "Marathon");
+  assert.equal(c.skip_reason, null);
+  assert.equal(c.duration_flag?.kind, "duration_ceiling_exceeded");
+});
+
+test("classify — SHORT at exactly 24h re-assigns (rule is >=)", () => {
   const c = classify(
     ev("All-Day Milonga", {
       start_dt_iso: "2026-05-29T19:00:00",
@@ -171,10 +243,11 @@ test("classify — SHORT category at exactly 24h DOES violate (rule is >=)", () 
     }),
     tangoNiche,
   );
-  assert.equal(c.duration_violation?.kind, "short_with_long_duration");
+  assert.equal(c.duration_flag?.kind, "duration_reassigned");
+  assert.notEqual(c.category_first, "Milonga"); // re-assigned away from SHORT
 });
 
-test("classify — SHORT category at 23h does NOT violate", () => {
+test("classify — SHORT at 23h is clean (no flag)", () => {
   const c = classify(
     ev("Long Milonga", {
       start_dt_iso: "2026-05-29T19:00:00",
@@ -182,13 +255,14 @@ test("classify — SHORT category at 23h does NOT violate", () => {
     }),
     tangoNiche,
   );
-  assert.equal(c.duration_violation, null);
+  assert.equal(c.duration_flag, null);
+  assert.equal(c.category_first, "Milonga");
 });
 
-test("classify — duration_violation null when no end_dt provided", () => {
+test("classify — no end_dt → no flag, no duration", () => {
   const c = classify(ev("Milonga"), tangoNiche);
   assert.equal(c.duration_hours, null);
-  assert.equal(c.duration_violation, null);
+  assert.equal(c.duration_flag, null);
 });
 
 // ─────────────────────────────────────────────────────────────────────

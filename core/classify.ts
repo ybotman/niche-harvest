@@ -92,23 +92,26 @@ export interface ClassifyResult {
   /** Internal trace of which keywords fired which slot — for debugging */
   trace: { slot: string; matched: string[] }[];
   /**
-   * Duration validation per LOADER-CONTRACT §7.2 hard rules. null = OK;
-   * non-null = violation detail (machine-readable kind + message). Enrich
-   * pipeline writes a `duration_violation` quality_flag and excludes from
-   * load when this is non-null. Set even when category is null/Unknown
-   * (max-duration rule applies regardless of classification).
+   * Soft duration flag per LOADER-CONTRACT §7.2 (Harvey 2026-04-29 revision).
+   * null = no issue. Non-null = informational flag only — event still loads.
+   * Two cases:
+   *   "duration_reassigned" — keyword category conflicted with duration; category
+   *     was re-assigned (e.g. SHORT+72h → Workshop). original_category records
+   *     the pre-reassignment name.
+   *   "duration_ceiling_exceeded" — duration exceeds per-category max ceiling
+   *     (Festival 240h, Marathon 120h, Encuentro 96h, Workshop 72h).
+   * Replaces the old hard-drop duration_violation.
    */
-  duration_violation: DurationViolation | null;
+  duration_flag: DurationFlag | null;
   /** Computed duration in hours; null if dates not parseable. */
   duration_hours: number | null;
 }
 
-export interface DurationViolation {
-  kind:
-    | "short_with_long_duration"   // SHORT category, duration >= 24h
-    | "long_with_short_duration"   // LONG category, duration < 24h
-    | "exceeds_max_duration";      // duration > 168h regardless of category
+export interface DurationFlag {
+  kind: "duration_reassigned" | "duration_ceiling_exceeded";
   detail: string;
+  /** Category name before re-assignment (set for duration_reassigned). */
+  original_category?: string;
 }
 
 /**
@@ -140,67 +143,121 @@ export function classify(
   const shortCats = cats.filter((c) => c.duration_group === "SHORT");
   const neutralCats = cats.filter((c) => c.duration_group === "NEUTRAL");
 
-  // Helper: build full result with shared duration_hours + duration_violation.
   const make = (
     categoryFirst: string | null,
     skipReason: SkipReason | null,
-  ): ClassifyResult => {
-    const winner = categoryFirst
-      ? cats.find((c) => c.name === categoryFirst) ?? null
-      : null;
-    return {
-      category_first: categoryFirst,
-      category_second: null,
-      category_third: null,
-      skip_reason: skipReason,
-      trace,
-      duration_hours: durationHours,
-      duration_violation: validateDuration(winner, durationHours),
-    };
-  };
+    durationFlag: DurationFlag | null = null,
+  ): ClassifyResult => ({
+    category_first: categoryFirst,
+    category_second: null,
+    category_third: null,
+    skip_reason: skipReason,
+    trace,
+    duration_hours: durationHours,
+    duration_flag: durationFlag,
+  });
 
-  // ─── LONG precedence ───
   const longMatched = matchCategoriesByName(haystack, longCats);
+  const shortMatched = matchCategoriesByName(haystack, shortCats);
+
+  // ─── LONG keyword match ───
   if (longMatched.length > 0) {
     trace.push({ slot: "LONG", matched: longMatched.map((c) => c.name) });
-    const winner = longMatched[0]!;
-    return make(winner.name, deriveSkipReason(winner, false));
+    const longWinner = longMatched[0]!;
+
+    // Case B: both LONG and SHORT keywords present + duration clearly SHORT →
+    // duration tips the scale to SHORT (Harvey 2026-04-29).
+    if (shortMatched.length > 0 && durationHours !== null && durationHours < HOURS_24) {
+      trace.push({ slot: "SHORT_BY_DURATION", matched: shortMatched.map((c) => c.name) });
+      const shortWinner = orderShort(shortMatched)[0]!;
+      return make(shortWinner.name, deriveSkipReason(shortWinner, false), null);
+    }
+
+    // Case A: LONG keyword but duration is SHORT → re-assign to best SHORT.
+    // Keeps LONG with flag if no SHORT keywords exist (name says LONG; duration
+    // may be a data quality issue rather than misclassification).
+    if (durationHours !== null && durationHours < HOURS_24) {
+      if (shortMatched.length > 0) {
+        const shortWinner = orderShort(shortMatched)[0]!;
+        trace.push({ slot: "REASSIGN_LONG_TO_SHORT", matched: [shortWinner.name] });
+        return make(shortWinner.name, deriveSkipReason(shortWinner, false), {
+          kind: "duration_reassigned",
+          detail: `LONG '${longWinner.name}' (${durationHours.toFixed(1)}h) < 24h; re-assigned to ${shortWinner.name}`,
+          original_category: longWinner.name,
+        });
+      }
+      // No SHORT keyword backup — keep LONG, soft flag for review.
+      return make(longWinner.name, deriveSkipReason(longWinner, false), {
+        kind: "duration_reassigned",
+        detail: `LONG '${longWinner.name}' (${durationHours.toFixed(1)}h) < 24h; no SHORT keyword to re-assign to — manual review`,
+        original_category: longWinner.name,
+      });
+    }
+
+    // Normal LONG — check per-category ceiling (soft).
+    return make(longWinner.name, deriveSkipReason(longWinner, false), checkCeiling(longWinner.name, durationHours));
   }
 
-  // ─── SHORT precedence: Milonga > Practica > Class ───
-  const shortMatched = matchCategoriesByName(haystack, shortCats);
+  // ─── SHORT keyword match ───
   if (shortMatched.length > 0) {
     trace.push({ slot: "SHORT", matched: shortMatched.map((c) => c.name) });
     const ordered = orderShort(shortMatched);
-    const winner = ordered[0]!;
-    const isClassOnly = winner.name === "Class" && ordered.length === 1;
-    return make(winner.name, deriveSkipReason(winner, isClassOnly));
+    const shortWinner = ordered[0]!;
+    const isClassOnly = shortWinner.name === "Class" && ordered.length === 1;
+
+    // Case A: SHORT keyword but duration is LONG → re-assign to Workshop
+    // (most generic LONG default). longMatched is empty here — if there were
+    // LONG keywords we'd have entered the LONG branch above, not this one.
+    if (durationHours !== null && durationHours >= HOURS_24) {
+      const reassignTo = cats.find((c) => c.name === "Workshop") ?? null;
+      if (reassignTo) {
+        trace.push({ slot: "REASSIGN_SHORT_TO_LONG", matched: [reassignTo.name] });
+        const flag: DurationFlag = {
+          kind: "duration_reassigned",
+          detail: `SHORT '${shortWinner.name}' (${durationHours.toFixed(1)}h) >= 24h; re-assigned to ${reassignTo.name}`,
+          original_category: shortWinner.name,
+        };
+        // Also check ceiling on the re-assigned LONG category.
+        const ceilingFlag = checkCeiling(reassignTo.name, durationHours);
+        return make(reassignTo.name, deriveSkipReason(reassignTo, false), ceilingFlag ?? flag);
+      }
+    }
+
+    return make(shortWinner.name, deriveSkipReason(shortWinner, isClassOnly), null);
   }
 
   // ─── NEUTRAL precedence: Performance > Trip > Unknown ───
   const neutralMatched = matchCategoriesByName(haystack, neutralCats);
   if (neutralMatched.length > 0) {
     trace.push({ slot: "NEUTRAL", matched: neutralMatched.map((c) => c.name) });
-    const ordered = orderNeutral(neutralMatched);
-    const winner = ordered[0]!;
-    return make(winner.name, deriveSkipReason(winner, false));
+    const winner = orderNeutral(neutralMatched)[0]!;
+    return make(winner.name, deriveSkipReason(winner, false), null);
   }
 
   // Default: Unknown if defined in the taxonomy; null otherwise.
   const unknown = cats.find((c) => c.name === "Unknown");
   if (unknown) {
     trace.push({ slot: "DEFAULT", matched: [] });
-    return make("Unknown", "skip_unknown");
+    return make("Unknown", "skip_unknown", null);
   }
-  return make(null, null);
+  return make(null, null, null);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Duration validation per LOADER-CONTRACT §7.2 hard rules
+// Duration helpers — per LOADER-CONTRACT §7.2 (Harvey 2026-04-29 revision)
 // ─────────────────────────────────────────────────────────────────────────
 
 const HOURS_24 = 24;
-const HOURS_168 = 168; // 7 days, max event duration
+
+// Per-category ceilings (Harvey 2026-04-29). Events exceeding these are
+// soft-flagged but still load — they signal misclassification or unusual
+// source data, not invalid events.
+const CATEGORY_CEILINGS: Record<string, number> = {
+  Festival: 240,   // 10 days — multi-day events are the definition
+  Marathon: 120,   // 5 days — 8-day "Marathon" is almost certainly a Festival
+  Encuentro: 96,   // 4 days
+  Workshop: 72,    // 3 days — weekend workshops are the norm
+};
 
 function computeDurationHours(ev: RawEvent): number | null {
   if (!ev.start_dt_iso || !ev.end_dt_iso) return null;
@@ -212,36 +269,16 @@ function computeDurationHours(ev: RawEvent): number | null {
   return ms / 3_600_000;
 }
 
-function validateDuration(
-  cat: CategoryConfig | null,
-  durationHours: number | null,
-): DurationViolation | null {
+function checkCeiling(categoryName: string, durationHours: number | null): DurationFlag | null {
   if (durationHours === null) return null;
-
-  // Max-duration rule applies regardless of category.
-  if (durationHours > HOURS_168) {
+  const ceiling = CATEGORY_CEILINGS[categoryName];
+  if (ceiling === undefined) return null;
+  if (durationHours > ceiling) {
     return {
-      kind: "exceeds_max_duration",
-      detail: `duration ${durationHours.toFixed(1)}h > ${HOURS_168}h max`,
+      kind: "duration_ceiling_exceeded",
+      detail: `duration ${durationHours.toFixed(1)}h > ${ceiling}h ceiling for ${categoryName}`,
     };
   }
-
-  if (!cat) return null; // no category → only max-duration check applies
-
-  if (cat.duration_group === "SHORT" && durationHours >= HOURS_24) {
-    return {
-      kind: "short_with_long_duration",
-      detail: `SHORT category '${cat.name}' but duration ${durationHours.toFixed(1)}h >= ${HOURS_24}h`,
-    };
-  }
-
-  if (cat.duration_group === "LONG" && durationHours < HOURS_24) {
-    return {
-      kind: "long_with_short_duration",
-      detail: `LONG category '${cat.name}' but duration ${durationHours.toFixed(1)}h < ${HOURS_24}h`,
-    };
-  }
-
   return null;
 }
 

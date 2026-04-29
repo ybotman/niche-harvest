@@ -81,10 +81,10 @@ interface EnrichSummary {
     identity_skip: number;
     classify_loadable: number;
     classify_skipped: number;
-    duration_violations: number;
+    duration_flags: number;
     by_category: Record<string, number>;
     by_skip_reason: Record<string, number>;
-    by_duration_violation_kind: Record<string, number>;
+    by_duration_flag_kind: Record<string, number>;
     unique_venues: number;
     venues_geocoded: number;
     venues_geocode_failed: number;
@@ -172,10 +172,10 @@ async function main(): Promise<void> {
       identity_skip: 0,
       classify_loadable: 0,
       classify_skipped: 0,
-      duration_violations: 0,
+      duration_flags: 0,
       by_category: {},
       by_skip_reason: {},
-      by_duration_violation_kind: {},
+      by_duration_flag_kind: {},
       unique_venues: 0,
       venues_geocoded: 0,
       venues_geocode_failed: 0,
@@ -298,24 +298,22 @@ async function main(): Promise<void> {
       }
     }
 
-    // ─── Duration-violation gate (LOADER-CONTRACT §7.2 hard rules) ───
-    // SHORT category with >=24h duration, LONG with <24h, or any >168h
-    // gets a duration_violation quality_flag and exits the loadable set.
-    // Caught Porter's CALBEAF-141 cases (Carolina+Ricardo, Lya Elcagu in SLC).
-    if (cl.duration_violation) {
-      totals.duration_violations += 1;
-      totals.by_duration_violation_kind[cl.duration_violation.kind] =
-        (totals.by_duration_violation_kind[cl.duration_violation.kind] ?? 0) + 1;
+    // ─── Duration flag (LOADER-CONTRACT §7.2 soft rules, Harvey 2026-04-29) ───
+    // Conflicts are re-assigned or soft-flagged; events remain in the loadable
+    // set. Hard drops replaced by quality_flags for DQ visibility.
+    if (cl.duration_flag) {
+      totals.duration_flags += 1;
+      totals.by_duration_flag_kind[cl.duration_flag.kind] =
+        (totals.by_duration_flag_kind[cl.duration_flag.kind] ?? 0) + 1;
       if (!opts.dryRun) {
         insertQualityFlag.run(
           row.id,
           row.source_id,
-          "duration_violation",
-          cl.duration_violation.detail,
+          cl.duration_flag.kind,
+          cl.duration_flag.detail,
         );
-        updateRawStatus.run("skipped", new Date().toISOString(), row.id);
+        // Event stays loadable — no updateRawStatus("skipped") here.
       }
-      continue;
     }
 
     totals.classify_loadable += 1;

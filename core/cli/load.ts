@@ -508,9 +508,9 @@ async function main(): Promise<void> {
     };
     const cl = classify(ev, niche);
 
-    // Reject if classifier indicates skip OR duration_violation present
-    if (cl.skip_reason || cl.duration_violation) {
-      // These should already be in quality_flags from enrich; not eligible.
+    // Reject if classifier indicates skip. Duration flags are soft (informational
+    // only per Harvey 2026-04-29); events with duration_flag still load.
+    if (cl.skip_reason) {
       continue;
     }
 
