@@ -6,6 +6,7 @@ state: active
 permanence: medium-term
 tags: [type/plan, app/tangotiempo, app/global]
 appid: 1
+niche: tango
 mission: M1
 ---
 
@@ -19,32 +20,53 @@ mission: M1
 
 ## 1. Current state (where are we RIGHT NOW)
 
-**Date of last update:** 2026-04-25
+**Date of last update:** 2026-04-29 (session 2)
 
 **Active mission:** M1 (see `MISSION.md`) — laptop + tango + full functional parity with current pipeline + design-for-90% load rate.
 
-**Current phase:** **Phase 1 backbone GREEN** end-to-end on slc-wasatch. Stretch (classify + geocode chain) GREEN at 55% geocode rate. All Phase 0 contracts LOCKED.
+**Current phase:** **Phase 3 stage 2 BUILD COMPLETE.** All paths code-ready (--live to TT_Test + --playground to ephemeral cluster). Awaiting Toby per-run auth on either path; nothing live-written yet.
 
-**Current task:** Validate Phase 1 measurability gates with AIDI; improve geocoder above 90%; add classifier duration-validation gate before Phase 2 (loader). niche-harvest is now its own repo at github.com/ybotman/niche-harvest (Quinn split 2026-04-25).
+**Current task:** Playground seeded (10,468 docs from TT_Test). Running --playground first load now. Harvey §7.2 duration classifier fix SHIPPED (commits b611c8b + 85fe94a).
+
+**Toby's plate (only-he-can-do):**
+1. **Pick a Phase 3 close path** (3 options):
+   - **A.** `--apply` on playground copy script → seeds playground from TT_Test 2026 subset (10,463 docs DRY-RUN'd) → then `--playground` first run → write ~185 events to ephemeral cluster (recommended: structurally safest)
+   - **B.** Direct `--live` to TT_Test with `--appid-override=20` sentinel → procedural appId isolation
+   - **C.** Both (playground first, then --live once trusted)
+2. **Pi setup** with new Pi 5 8GB hardware: OS install, network, Node 22, ssh key, Tailscale
+3. (Eventually) `--apply` + per-run flag execution → I'd run the actual command after his go
 
 **What's in-flight right now:**
-- LOADER-CONTRACT.md — **LOCKED** 2026-04-24 (AIDI + Fulton + Sarah cleared)
-- SAFEGUARD-SPEC.md v3 — AIDI v3 cleared 2026-04-25; mock-FB integrated 2026-04-24 (smoke 15/15); at lock condition
-- ARCHITECTURE.md v3 — AIDI overseer cleared 2026-04-25 (3 fixes applied); Fulton loader spot-check pending (pinged 2026-04-25)
-- `niches/tango/niche.yaml` — drafted 2026-04-24 (11 YES FB groups + 1 iCal + 2 web sources + full taxonomy; js-yaml parses clean)
-- Harvey's reply on slc-wasatch specifics — awaiting (deferred to per-adapter doc when received; not blocking)
-- Booker's candidate CSV (group inheritance ranking) — **DELIVERED** commit `03f61cf` at `Collab/handoffs/narvest/m1-group-inheritance-candidates.csv` (11 YES / 83 MAYBE / 282 NO / 3 aggregator-markers)
-- Booker's mock-FB server — **DELIVERED + INTEGRATED** at `niche-harvest/test/mock-fb/`; smoke 15/15 in 495ms
-- Fulton's Q3 answer (non-Class categoryId lookup) — **RESOLVED** in LOADER-CONTRACT §6.4 (cache-warm via `GET /api/categories?appId=1&limit=500`)
+- All 3 contracts (LOADER + SAFEGUARD + ARCHITECTURE) LOCKED with drift-back updates landed
+- DATA-ACCESS-GUARDRAILS.md DRAFT routed via Quinn (8-signoff round; not blocking)
+- niche.yaml v1: 11 YES FB groups + 1 iCal + 2 web sources + full taxonomy + per-niche `location_default` for slc-wasatch
+- Phase 1 + 1.5 + 1.5b + 2 + 2.5 + 3 stage 1 + 3 stage 2 build all DONE (commits through `29bb633` on github.com/ybotman/niche-harvest main)
+- 64 unit tests green (`npm run test:unit`)
+- Mock-FB server integrated; smoke 15/15
+- AIDI cleared Phase 2 + Phase 3 stage 1 + Phase 3 stage 2 build
+- Fulton accepted ARCHITECTURE v4 + loader-side spot-check + provided playground copy script
+- Sarah voted Path 1 on §7.6 spec gap (forwarded to Quinn)
+- Quinn handled repo split + vault symlinks + GUARDRAILS routing
+- Booker delivered mock-FB server + candidate CSV; FB tour queued for Phase 6
+- Pi 5 hardware (8GB Vilros kit) IN HAND 2026-04-29 — unblocks M1.5 prep
+
+**Recent upstream changes from team (drift-backs applied):**
+- CALBEAF-154 (Fulton 2026-04-27): DayWorkshop deprecated; Workshop covers FLEX bucket; LOADER-CONTRACT §7.5/§7.6/§16.5 updated
+- CALBEAF-156 (Fulton 2026-04-28): user-CRUD path skips classifier; *Override fields are AI-loader-only concept; memory saved (no doc change per Fulton)
 
 **Blockers:**
-- None forcing a hard stop. Docs waiting on reviews; code not started pending lock.
+- AIDI §7.2 sign-off on LOADER-CONTRACT (Harvey routing now; not blocking playground)
+- Phase 3 --live run still requires Toby per-run auth (Path B or C)
 
-**Not-started-yet (intentional hold until docs lock):**
-- No TypeScript code
-- No SQLite schema migration
-- No adapter implementation
-- No loader implementation
+**Not-started-yet (Phase 4-10; mostly waits until Phase 3 closes):**
+- Phase 4 — iCal portfolio expansion (~40 other harvester feeds)
+- Phase 5 — Web scrapers (TangoMango, NYTango, TEC, dc-capital-tangueros)
+- Phase 6 — FB integration (biggest tail risk per Quinn G1; pre-flight Chromium memory test required first)
+- Phase 7 — Scheduler / autonomous loop
+- Phase 8 — Error feedback loop / DQ signals (design intent captured, not built)
+- Phase 9 — calendar-campaigns handoff
+- Phase 10 — M1 close + deploy doc
+- M1.5 — Pi systemd setup (hardware ready; scripts not written)
 
 ---
 
@@ -132,6 +154,8 @@ Recent interactions (newest first). Older entries migrate to a per-month archive
 
 | Date | Direction | Persona | Subject | Outcome |
 |------|-----------|---------|---------|---------|
+| 2026-04-29 | Harvey → Narvest | Harvey | DQ signal synthesis: geo inline ✓, duration soft flags needed, digest DQ reporting | §7.2 revised; LOADER-CONTRACT updated; delta confirmed |
+| 2026-04-29 | Narvest → Harvey | Harvey | §7.2 delta numbers + LOADER-CONTRACT update | Harvey routing to AIDI for sign-off |
 | 2026-04-24 | AIDI → Narvest | AIDI | SAFEGUARD-SPEC v2 cleared; LOADER-CONTRACT overseer pass next | Booker review unblocked |
 | 2026-04-24 | Narvest → Booker | Booker | SAFEGUARD-SPEC v2 ready for implementation review | Pending |
 | 2026-04-24 | Narvest → AIDI | AIDI | SAFEGUARD-SPEC v2 (2 gaps closed, 4 Qs answered) | AIDI cleared |
@@ -262,7 +286,10 @@ slc-wasatch dry-run report (`data/tango/snapshots/2026-04-25-load.json`):
 - [x] H1/H3 isDiscovered=true filter on Mongo dedup query (mongo-direct.ts)
 - [x] Add `--live` flag to load CLI; 3-gate auth: MONGODB_URI_TEST + NICHE_HARVEST_LIVE=1 + confirmTestOnly. Swaps DryRunLoader → MongoDirectLoader. Verified all 3 fail-fast paths.
 - [x] **Match-or-explain rule documented** (CLAUDE.md hard constraints + memory `feedback_check_existing_team_code_first`); slc-wasatch comparison 185 vs Harvey 303 fully explained (134 Class + 9 duration_violation gated per current spec)
-- [ ] **Toby per-run --live auth** (each run requires explicit "yes go" per PROD-DEPLOY-PROTECTION posture — not standing greenlight)
+- [x] **Path A: --apply playground copy → --playground run** (2026-04-29: 10,468 docs seeded; 153 events/25 venues written; 0 failures)
+- [x] Harvey §7.2 duration classifier fix shipped (b611c8b + 85fe94a; LOADER-CONTRACT updated; AIDI sign-off pending)
+- [ ] AIDI §7.2 sign-off on LOADER-CONTRACT (Harvey routing)
+- [ ] **Toby per-run --live auth** (Path B: `--live --appid-override=99` to TT_Test when ready)
 - [ ] Run `--live --appid-override=99`; verify inserts at appId=99 + appId=1 untouched
 - [ ] Post-write parity check vs Porter's TEST load
 - [ ] Q-AI-01-RECONFIRM with AIDI before live load (90% loadable-rate denominator semantics)
