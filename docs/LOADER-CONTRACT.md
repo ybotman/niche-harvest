@@ -10,6 +10,9 @@ niche: tango
 reviewers: [aidi, fulton, sarah]
 locked_at: 2026-04-24
 locked_by: [aidi, fulton, sarah]
+last_updated: 2026-04-29
+last_update_by: harvey-relay/aidi
+last_update_sections: [§7.2, §12.2, §16]
 ---
 
 # LOADER-CONTRACT — niche-harvest → MasterCalendar
