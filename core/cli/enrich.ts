@@ -450,8 +450,8 @@ async function main(): Promise<void> {
     const failedRows = db
       .prepare(`
         SELECT fingerprint, name, city FROM venues
-        WHERE geocode_status = 'failed'
-        ORDER BY id
+        WHERE geocode_status IN ('failed', 'pending')
+        ORDER BY CASE WHEN geocode_status = 'pending' THEN 0 ELSE 1 END, id
       `)
       .all() as unknown as { fingerprint: string; name: string; city: string | null }[];
     let requeued = 0;
@@ -502,6 +502,17 @@ async function main(): Promise<void> {
   for (const v of venueQueue.values()) {
     if (geocodeCalls >= opts.maxGeocodes) {
       totals.venues_geocode_skipped_cap += 1;
+      // Still upsert venue as 'pending' and link raw_events — so the venue
+      // record exists for retry passes and venue_id FK is set even before
+      // geocoding. Without this, capped venues are permanently invisible to
+      // --retry-failed-venues and the link-unlinked pass finds nothing in DB.
+      if (!opts.dryRun) {
+        upsertVenue.run(v.fingerprint, v.canonical_name, v.canonical_city, null, null, null, null, "pending");
+        const pendingVenueId = getVenueIdByFingerprint(db, v.fingerprint);
+        if (pendingVenueId !== null) {
+          for (const reId of v.raw_event_ids) linkRawEventVenue(db, reId, pendingVenueId);
+        }
+      }
       continue;
     }
     // ─── Structured-query geocoding (AIDI 2026-04-25 root-cause fix) ───
@@ -611,6 +622,55 @@ async function main(): Promise<void> {
     venues_geocode_failed: totals.venues_geocode_failed,
     venues_geocode_skipped_cap: totals.venues_geocode_skipped_cap,
   });
+
+  // ─── Pass 3: Link unlinked events to already-geocoded venues ───
+  // When the geocode cap is hit, some venues are skipped and their events
+  // never get venue_id set (only linking happens in the same pass as geocode).
+  // On re-runs, rows is empty (no pending events) so venueQueue is never built.
+  // This pass repairs the gap: for each enriched event with venue_id=NULL,
+  // re-fingerprint the venue text and link to the venue if it already exists
+  // in the DB (regardless of geocode_status — loader gates on geocode_status).
+  if (!opts.dryRun) {
+    const unlinked = db.prepare(`
+      SELECT re.id, re.raw_location_text, s.config_json
+      FROM raw_events re
+      JOIN sources s ON s.id = re.source_id
+      WHERE re.status = 'enriched'
+        AND re.venue_id IS NULL
+        AND re.raw_location_text IS NOT NULL
+        AND re.raw_location_text != ''
+    `).all() as unknown as { id: number; raw_location_text: string; config_json: string | null }[];
+
+    let linked = 0;
+    for (const row of unlinked) {
+      let sourceDefaults: { city?: string; state?: string; country?: string } = {};
+      if (row.config_json) {
+        try {
+          const cfg = JSON.parse(row.config_json) as { location_default?: typeof sourceDefaults };
+          if (cfg.location_default) sourceDefaults = cfg.location_default;
+        } catch {}
+      }
+      const parsed = parseLocation(row.raw_location_text, sourceDefaults);
+      const canonicalName = parsed.venue_name
+        ?? row.raw_location_text.split(",")[0]?.trim()
+        ?? row.raw_location_text;
+      const canonicalCity = parsed.city ?? "";
+      const fp = fingerprintVenue({ name: canonicalName, city: canonicalCity });
+      const venueId = getVenueIdByFingerprint(db, fp);
+      if (venueId !== null) {
+        linkRawEventVenue(db, row.id, venueId);
+        linked += 1;
+      }
+    }
+    if (unlinked.length > 0) {
+      log.info("link-unlinked done", {
+        unlinked_candidates: unlinked.length,
+        newly_linked: linked,
+        still_unlinked: unlinked.length - linked,
+        note: "gap caused by geocode cap on prior run; venue_id now set for all recoverable events",
+      });
+    }
+  }
 
   // ─── Cumulative state query (always populated; AIDI 2026-04-25 fix) ───
   // Lets the artifact reader know the niche's current standing regardless

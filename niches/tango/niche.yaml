@@ -245,6 +245,71 @@ sources:
         state: UT
         country: US
 
+    - name: seattle
+      display_name: All Seattle Tango
+      url: https://calendar.google.com/calendar/ical/303dv79v9olf53l5lv2kle2ivs%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Los_Angeles
+      location_default:
+        city: Seattle
+        state: WA
+        country: US
+
+    - name: portland-milongas
+      display_name: Portland Tango — Milongas
+      url: https://calendar.google.com/calendar/ical/lq6alke74don53b7gc54nfpgh4%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Los_Angeles
+      location_default:
+        city: Portland
+        state: OR
+        country: US
+
+    - name: austin-milongas
+      display_name: Austin Tango Society
+      url: https://calendar.google.com/calendar/ical/aiusn8ua5aq0fn2hqavnlabvpg%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Chicago
+      location_default:
+        city: Austin
+        state: TX
+        country: US
+
+    - name: minneapolis
+      display_name: Tango Society of Minnesota (Minneapolis)
+      url: https://calendar.google.com/calendar/ical/20n1154ol9jg5mio3acsc8rkb4%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Chicago
+      location_default:
+        city: Minneapolis
+        state: MN
+        country: US
+
+    - name: tucson
+      display_name: Tucson Tango
+      url: https://calendar.google.com/calendar/ical/tucsontangocalendar%40gmail.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Phoenix
+      location_default:
+        city: Tucson
+        state: AZ
+        country: US
+
   # ───── Web pages ─────
   # Sources: AS-IS-PIPELINE-2026-04-24 inventory + Booker CSV NOT_A_FB_GROUP
   # markers source-tm + source-nyt (which were always web aggregators).
