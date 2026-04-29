@@ -35,7 +35,7 @@ locked_by: [aidi, fulton, sarah]
 | Time format | UTC Zulu on `startDate` / `endDate`; loader writes UTC, never local |
 | RRULE | Single record with RRULE string; FE expands via `rrule.between()`; never pre-expand |
 | Anti-recurrence | Events with `endDate - startDate > 24h` cannot be recurring (BE force-nulls `isRepeating` / `recurrenceRule`) |
-| Max event duration | 168h (7 days) |
+| Max event duration | Per-category ceilings: Festival 240h / Marathon 120h / Encuentro 96h / Workshop 72h. Exceeded → soft flag, event still loads. |
 | Dependency order | Organizer → Venue → Event (not BE-enforced but denorm breaks if skipped) |
 | isDiscovered | `true` on both Venues and Events (mandatory) |
 | discoverySource | `"niche-harvest"` (convention; not BE-enforced; no current reader) |
@@ -360,11 +360,32 @@ Behavior:
 
 Combo events are unaffected: Class as `categorySecond` / `categoryThird` on a Milonga/Practica has always loaded (the class is metadata, not a reason to skip).
 
-### 7.2 Hard rules (enforced by TT validation)
+### 7.2 Duration rules (Harvey 2026-04-29 revision — soft flags replace hard drops)
 
+Duration feeds INTO classification; conflicts trigger re-assignment, not rejection.
+
+**Case A — conflict → re-assign:**
+- SHORT category + duration ≥ 24h → re-assign to best LONG match in title, or Workshop (default LONG)
+- LONG category + duration < 24h + SHORT keyword in title → re-assign to best SHORT
+- LONG category + duration < 24h + no SHORT keyword → keep LONG, emit `duration_reassigned` flag
+
+**Case B — disambiguation (both LONG+SHORT keywords match):**
+- duration < 24h → SHORT wins (overrides default LONG-wins precedence)
+- duration ≥ 24h → LONG wins (default behavior)
+
+**Per-category ceilings (soft flag, not drop):**
+| Category | Ceiling | Rationale |
+|----------|---------|-----------|
+| Festival | 240h (10 days) | Multi-day definition |
+| Marathon | 120h (5 days) | 8-day "Marathon" is likely a Festival mislabeled |
+| Encuentro | 96h (4 days) | |
+| Workshop | 72h (3 days) | Weekend norm |
+
+Events exceeding ceiling → `duration_ceiling_exceeded` quality_flag; event still loads.
+
+**Other hard rules (still enforced):**
 1. **SHORT + LONG cannot mix** across the three slots of one event.
-2. **Max 7 days (168h)** for any event.
-3. **`Unknown` is a legit bucket** for ambiguous events — do NOT force-map.
+2. **`Unknown` is a legit bucket** for ambiguous events — do NOT force-map.
 
 ### 7.3 `skipReason` derivation (deterministic; loader writes it)
 
@@ -542,7 +563,8 @@ Every event ingested is in exactly one bucket: `loadable_events` or `quality_fla
 - `date_invalid` — startDate/endDate fails Date() constructor
 - `date_past` — startDate older than 6 days ago (per Porter convention)
 - `short_long_mix` — classifier emitted SHORT+LONG in same event (violates hard rule)
-- `duration_violation` — SHORT with duration ≥24h, LONG with duration <24h, or any >168h
+- `duration_reassigned` — category re-assigned due to duration conflict (Case A); original_category in detail
+- `duration_ceiling_exceeded` — duration exceeds per-category ceiling (Festival 240h / Marathon 120h / Encuentro 96h / Workshop 72h); event still loads
 - `fb_blocked` — FB safeguard triggered mid-fetch (SAFEGUARD-SPEC.md)
 - `fb_session_expired` — authenticated FB session lost mid-fetch
 
