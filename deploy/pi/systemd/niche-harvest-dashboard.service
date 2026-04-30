@@ -13,6 +13,7 @@ Group=narvest
 WorkingDirectory=/home/narvest/niche-harvest
 Environment="NODE_ENV=production"
 Environment="HOME=/home/narvest"
+EnvironmentFile=/home/narvest/niche-harvest/.env
 
 ExecStart=/usr/bin/env bash run.sh --niche=tango dashboard --port=9000
 
