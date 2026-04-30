@@ -310,6 +310,19 @@ sources:
         state: AZ
         country: US
 
+    - name: dc-capital-tangueros
+      display_name: Capital Tangueros (DC/Baltimore/NoVA)
+      url: https://calendar.google.com/calendar/ical/4vt5bq8tisa5vka79l0f6v5av4%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/New_York
+      location_default:
+        city: Washington
+        state: DC
+        country: US
+
   # ───── Web pages ─────
   # Sources: AS-IS-PIPELINE-2026-04-24 inventory + Booker CSV NOT_A_FB_GROUP
   # markers source-tm + source-nyt (which were always web aggregators).
