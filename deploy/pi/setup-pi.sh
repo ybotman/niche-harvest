@@ -48,6 +48,8 @@ require_root() {
 step_apt() {
   log "Step 1: apt update + essential packages"
   apt-get update
+
+  # Core packages — must succeed
   apt-get install -y \
     git \
     curl \
@@ -55,14 +57,38 @@ step_apt() {
     build-essential \
     python3 \
     sqlite3 \
-    chromium-browser \
-    chromium-codecs-ffmpeg \
     fonts-liberation \
     libnss3 \
-    libgconf-2-4 \
     libxss1 \
-    libasound2 \
     ca-certificates
+
+  # Chromium — package name differs across Debian/RPi OS releases:
+  #   Bookworm RPi OS: chromium-browser
+  #   Trixie RPi OS / upstream Debian 13: chromium
+  if apt-cache show chromium-browser >/dev/null 2>&1; then
+    log "  installing chromium-browser (Bookworm-style package)"
+    apt-get install -y chromium-browser || true
+  elif apt-cache show chromium >/dev/null 2>&1; then
+    log "  installing chromium (Trixie/Debian-style package)"
+    apt-get install -y chromium || true
+  else
+    log "  WARN: no chromium package found; FB integration (Phase 6) will fail. Install manually later."
+  fi
+
+  # libasound2 was renamed libasound2t64 in Trixie — install whichever exists
+  if apt-cache show libasound2t64 >/dev/null 2>&1; then
+    apt-get install -y libasound2t64 || true
+  elif apt-cache show libasound2 >/dev/null 2>&1; then
+    apt-get install -y libasound2 || true
+  fi
+
+  # chromium-codecs-ffmpeg is RPi-specific; best-effort
+  apt-get install -y chromium-codecs-ffmpeg 2>/dev/null || \
+    log "  chromium-codecs-ffmpeg not available (non-RPi distribution); skipping"
+
+  # libgconf-2-4 was removed in Trixie; only install if available
+  apt-get install -y libgconf-2-4 2>/dev/null || \
+    log "  libgconf-2-4 not available (Trixie+); skipping"
 }
 
 step_node() {

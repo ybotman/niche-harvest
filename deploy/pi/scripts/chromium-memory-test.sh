@@ -36,8 +36,22 @@ mkdir -p "$REPO_ROOT/data/watchdog"
 echo "[memtest] starting — duration=${DURATION}s target=${TARGET_URL}"
 echo "[memtest] pi=${PI_NAME} threshold=${THRESHOLD_MB}MB"
 
+# Locate chromium binary (name differs across distros)
+CHROMIUM_BIN=""
+for cmd in chromium chromium-browser /usr/bin/chromium /usr/bin/chromium-browser; do
+  if command -v "$cmd" >/dev/null 2>&1 || [[ -x "$cmd" ]]; then
+    CHROMIUM_BIN="$cmd"
+    break
+  fi
+done
+if [[ -z "$CHROMIUM_BIN" ]]; then
+  echo "[memtest] FAIL: no chromium binary found (tried: chromium, chromium-browser)"
+  exit 1
+fi
+echo "[memtest] using binary: $CHROMIUM_BIN"
+
 # Launch Chromium headless with reasonable Pi flags
-chromium-browser \
+"$CHROMIUM_BIN" \
   --headless=new \
   --disable-gpu \
   --no-sandbox \
