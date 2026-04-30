@@ -23,6 +23,10 @@ export const PATHS = {
   dataRoot: path.join(REPO_ROOT, "data"),
   nichesRoot: path.join(REPO_ROOT, "niches"),
 
+  /** Per-niche data dir: data/<niche>/ */
+  nicheDataDir: (nicheKey: string) =>
+    path.join(REPO_ROOT, "data", nicheKey),
+
   /** SQLite file for a niche: data/<niche>/harvest.sqlite */
   nicheSqlite: (nicheKey: string) =>
     path.join(REPO_ROOT, "data", nicheKey, "harvest.sqlite"),
