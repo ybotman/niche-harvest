@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>niche-harvest — live</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #14181f;
+    --panel-2: #1a1f28;
+    --border: #2a3340;
+    --fg: #e6e8eb;
+    --fg-dim: #8a93a3;
+    --ok: #5eba7d;
+    --warn: #f0b232;
+    --err: #ec5d5d;
+    --info: #6cb3f0;
+    --accent: #b380ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 18px;
+    overflow: hidden;
+  }
+  .root {
+    display: grid;
+    grid-template-rows: auto 1fr 280px;
+    height: 100vh;
+    gap: 8px;
+    padding: 8px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+  }
+  header .title {
+    font-size: 22px;
+    font-weight: 600;
+  }
+  header .title .accent { color: var(--accent); }
+  header .meta {
+    color: var(--fg-dim);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  header .niche-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--fg-dim);
+    margin-left: 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .panel h2 .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--panel-2);
+    color: var(--fg-dim);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+  }
+  .panel.placeholder {
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-dim);
+    text-align: center;
+  }
+  .panel.placeholder .ph-title {
+    font-size: 32px;
+    color: var(--fg);
+    margin-bottom: 6px;
+    font-weight: 300;
+  }
+  .panel.placeholder .ph-sub {
+    font-size: 13px;
+    color: var(--fg-dim);
+    max-width: 80%;
+  }
+
+  /* Site list */
+  .sites {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .site-row {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .site-row .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .site-row.ok .dot { background: var(--ok); }
+  .site-row.warn .dot { background: var(--warn); }
+  .site-row.err .dot { background: var(--err); }
+  .site-row.info .dot { background: var(--info); }
+  .site-row .name { font-weight: 500; }
+  .site-row .info {
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .site-row .next {
+    font-size: 12px;
+    color: var(--fg-dim);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .site-row .err-msg {
+    grid-column: 2 / span 2;
+    color: var(--err);
+    font-size: 11px;
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Status pill for scheduler */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .status-pill .blob {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 6px var(--ok);
+  }
+  .status-pill.idle .blob { background: var(--info); box-shadow: 0 0 6px var(--info); }
+  .status-pill.busy .blob { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  .status-pill.dead .blob { background: var(--err); box-shadow: 0 0 6px var(--err); }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.5); opacity: 0.5; }
+  }
+
+  /* Bottom: metrics + chart */
+  .metrics {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 8px;
+  }
+  .metric-tiles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 6px;
+  }
+  .metric-tile {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .metric-tile .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+  }
+  .metric-tile .value {
+    font-size: 28px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin-top: 2px;
+  }
+  .metric-tile .sub {
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .chart {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .chart h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+    margin-bottom: 8px;
+  }
+  .chart .canvas {
+    flex: 1;
+    position: relative;
+  }
+  .chart svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .chart .axis-label {
+    font-size: 10px;
+    fill: var(--fg-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Sub-panel: the inner section count grid for SITES (running/upcoming/completed/errors) */
+  .site-buckets {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .site-bucket {
+    background: var(--panel-2);
+    border-radius: 4px;
+    padding: 6px 8px;
+  }
+  .site-bucket .lbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+  }
+  .site-bucket .val {
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin-top: 1px;
+  }
+  .site-bucket.running .val { color: var(--info); }
+  .site-bucket.upcoming .val { color: var(--fg); }
+  .site-bucket.completed .val { color: var(--ok); }
+  .site-bucket.errors .val { color: var(--err); }
+
+  /* Connection state indicator (corner) */
+  .conn {
+    position: fixed;
+    bottom: 6px;
+    right: 12px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .conn .blob {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok);
+  }
+  .conn.disconnected .blob { background: var(--err); }
+  .conn.disconnected { color: var(--err); }
+</style>
+</head>
+<body>
+<div class="root">
+  <header>
+    <div class="title">
+      <span class="accent">●</span> niche-harvest
+      <span id="niche-pill" class="niche-pill">tango</span>
+    </div>
+    <div class="meta">
+      <span id="scheduler-pill" class="status-pill idle">
+        <span class="blob"></span><span class="text">…</span>
+      </span>
+      <span id="last-update" style="margin-left: 12px;">—</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Q1: SITES -->
+    <section class="panel">
+      <h2>
+        Sites (iCal)
+        <span class="badge" id="sites-summary">—</span>
+      </h2>
+      <div class="site-buckets">
+        <div class="site-bucket running"><div class="lbl">Running</div><div class="val" id="bucket-running">0</div></div>
+        <div class="site-bucket upcoming"><div class="lbl">Upcoming</div><div class="val" id="bucket-upcoming">0</div></div>
+        <div class="site-bucket completed"><div class="lbl">Completed</div><div class="val" id="bucket-completed">0</div></div>
+        <div class="site-bucket errors"><div class="lbl">Errors</div><div class="val" id="bucket-errors">0</div></div>
+      </div>
+      <div id="site-list" class="sites"></div>
+    </section>
+
+    <!-- Q2: FB -->
+    <section class="panel placeholder">
+      <div class="ph-title">FB</div>
+      <div class="ph-sub">
+        Phase 6 — Facebook integration<br>
+        Pre-flight Chromium memory test required first.<br>
+        Block-detector + rate-limiter + watchdog from SAFEGUARD-SPEC.
+      </div>
+    </section>
+
+    <!-- Q3: M2 -->
+    <section class="panel placeholder">
+      <div class="ph-title">M2 · Discovery</div>
+      <div class="ph-sub">
+        AI-assisted source identification.<br>
+        Sandbox SQLite for candidates → HITL approval → niche.yaml promotion.
+      </div>
+    </section>
+
+    <!-- Q4: M3 -->
+    <section class="panel placeholder">
+      <div class="ph-title">M3 · Auto-adapter</div>
+      <div class="ph-sub">
+        Narvest-as-AI generates and tests new adapters autonomously.<br>
+        Self-extending pipeline.
+      </div>
+    </section>
+  </div>
+
+  <!-- Bottom: metrics + chart -->
+  <div class="metrics">
+    <div class="metric-tiles">
+      <div class="metric-tile">
+        <div class="label">Loadable</div>
+        <div class="value" id="m-loadable">—</div>
+        <div class="sub" id="m-loadable-sub">events with geocoded venue</div>
+      </div>
+      <div class="metric-tile">
+        <div class="label">Geocode rate</div>
+        <div class="value" id="m-geocode">—</div>
+        <div class="sub" id="m-geocode-sub">— / —</div>
+      </div>
+      <div class="metric-tile">
+        <div class="label">Enriched</div>
+        <div class="value" id="m-enriched">—</div>
+        <div class="sub" id="m-enriched-sub">of — total raw</div>
+      </div>
+      <div class="metric-tile">
+        <div class="label">Quality flags</div>
+        <div class="value" id="m-flags">—</div>
+        <div class="sub" id="m-flags-sub">all reasons</div>
+      </div>
+    </div>
+    <div class="chart">
+      <h3>Events Loaded — Recent Cycles</h3>
+      <div class="canvas">
+        <svg id="chart-svg" viewBox="0 0 800 200" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="conn" class="conn"><span class="blob"></span><span>connected</span></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (sel) => document.querySelector(sel);
+  let lastConnectAt = Date.now();
+
+  function fmtRelative(iso) {
+    if (!iso) return '—';
+    const ms = Date.parse(iso) - Date.now();
+    const abs = Math.abs(ms);
+    const s = Math.floor(abs / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    const d = Math.floor(h / 24);
+    let txt;
+    if (d > 0) txt = `${d}d ${h % 24}h`;
+    else if (h > 0) txt = `${h}h ${m % 60}m`;
+    else if (m > 0) txt = `${m}m ${s % 60}s`;
+    else txt = `${s}s`;
+    return ms < 0 ? `${txt} ago` : `in ${txt}`;
+  }
+
+  function bucketize(sources, schedulerStatus) {
+    const now = Date.now();
+    const out = { running: 0, upcoming: 0, completed: 0, errors: 0 };
+    const isBusy = schedulerStatus && schedulerStatus !== 'idle' && schedulerStatus !== 'no_heartbeat';
+    for (const s of sources) {
+      if (s.last_error) { out.errors += 1; continue; }
+      if (isBusy && s.next_check_at && Date.parse(s.next_check_at) <= now) {
+        out.running += 1;
+      } else if (s.last_checked_at && s.events_found_last > 0) {
+        out.completed += 1;
+      } else if (s.next_check_at && Date.parse(s.next_check_at) > now) {
+        out.upcoming += 1;
+      } else {
+        out.completed += 1;
+      }
+    }
+    return out;
+  }
+
+  function siteRowHtml(s, schedulerStatus) {
+    const now = Date.now();
+    const hasErr = !!s.last_error;
+    const isBusy = schedulerStatus && schedulerStatus !== 'idle' && schedulerStatus !== 'no_heartbeat';
+    const isRunning = isBusy && s.next_check_at && Date.parse(s.next_check_at) <= now;
+    let cls = 'ok';
+    if (hasErr) cls = 'err';
+    else if (isRunning) cls = 'info';
+    else if (!s.last_checked_at) cls = 'warn';
+
+    const last = s.last_checked_at
+      ? `last ${fmtRelative(s.last_checked_at)} · ${s.events_found_last ?? 0} events`
+      : 'never run';
+    const next = s.next_check_at ? `next ${fmtRelative(s.next_check_at)}` : '—';
+    const errLine = hasErr ? `<div class="err-msg">${escapeHtml(String(s.last_error).slice(0, 200))}</div>` : '';
+
+    return `
+      <div class="site-row ${cls}">
+        <div class="dot"></div>
+        <div>
+          <div class="name">${escapeHtml(s.source_id)}</div>
+          <div class="info">${last}</div>
+          ${errLine}
+        </div>
+        <div class="next">${next}</div>
+      </div>
+    `;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function renderChart(svgEl, recentLoads) {
+    const data = (recentLoads || []).slice().reverse(); // chronological L→R
+    if (data.length === 0) {
+      svgEl.innerHTML = '<text x="400" y="100" text-anchor="middle" class="axis-label">no recent loads yet</text>';
+      svgEl.querySelectorAll('text').forEach(t => t.style.fill = 'var(--fg-dim)');
+      return;
+    }
+    const max = Math.max(...data.map(d => d.events_inserted), 1);
+    const w = 800, h = 200, padL = 50, padR = 20, padT = 20, padB = 30;
+    const innerW = w - padL - padR;
+    const innerH = h - padT - padB;
+    const barW = innerW / Math.max(data.length, 1) * 0.6;
+    const barGap = innerW / Math.max(data.length, 1);
+
+    let bars = '';
+    let labels = '';
+    for (let i = 0; i < data.length; i++) {
+      const d = data[i];
+      const barH = (d.events_inserted / max) * innerH;
+      const x = padL + barGap * i + (barGap - barW) / 2;
+      const y = padT + (innerH - barH);
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="var(--accent)" opacity="0.85"/>`;
+      bars += `<text x="${(x + barW/2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="axis-label" style="fill: var(--fg);">${d.events_inserted}</text>`;
+      // Bottom label every-other for readability
+      if (i % Math.max(1, Math.floor(data.length / 6)) === 0 || i === data.length - 1) {
+        labels += `<text x="${(x + barW/2).toFixed(1)}" y="${(h - 8).toFixed(1)}" text-anchor="middle" class="axis-label">${d.date.slice(5)}</text>`;
+      }
+    }
+    // Y-axis baseline
+    const baseline = `<line x1="${padL}" y1="${padT + innerH}" x2="${w - padR}" y2="${padT + innerH}" stroke="var(--border)" stroke-width="1"/>`;
+    const yMaxLabel = `<text x="${padL - 6}" y="${padT + 10}" text-anchor="end" class="axis-label">${max}</text>`;
+    const y0Label = `<text x="${padL - 6}" y="${padT + innerH + 4}" text-anchor="end" class="axis-label">0</text>`;
+    svgEl.innerHTML = baseline + bars + labels + yMaxLabel + y0Label;
+  }
+
+  function render(state) {
+    if (!state || !state.niches || state.niches.length === 0) return;
+    const n = state.niches[0];
+
+    // Header
+    $('#niche-pill').textContent = n.display_name;
+    $('#last-update').textContent = `updated ${new Date(state.generated_at).toLocaleTimeString()}`;
+
+    const schedStatus = n.scheduler.status;
+    const pill = $('#scheduler-pill');
+    pill.classList.remove('idle','busy','dead');
+    let pillClass = 'busy';
+    if (schedStatus === 'idle') pillClass = 'idle';
+    else if (schedStatus === 'no_heartbeat' || schedStatus === 'unparseable') pillClass = 'dead';
+    pill.classList.add(pillClass);
+    const ageTxt = n.scheduler.age_seconds != null ? ` · ${n.scheduler.age_seconds}s ago` : '';
+    pill.querySelector('.text').textContent = `scheduler: ${schedStatus}${ageTxt}`;
+
+    // SITES quadrant
+    const buckets = bucketize(n.sources, schedStatus);
+    $('#bucket-running').textContent = buckets.running;
+    $('#bucket-upcoming').textContent = buckets.upcoming;
+    $('#bucket-completed').textContent = buckets.completed;
+    $('#bucket-errors').textContent = buckets.errors;
+    $('#sites-summary').textContent = `${n.sources.length} sources`;
+
+    const list = $('#site-list');
+    list.innerHTML = n.sources.map(s => siteRowHtml(s, schedStatus)).join('');
+
+    // METRICS bottom-left
+    $('#m-loadable').textContent = n.totals.loadable_for_phase_2.toLocaleString();
+    const total = n.totals.venues_total || 1;
+    const rate = ((n.totals.venues_geocoded / total) * 100).toFixed(0);
+    $('#m-geocode').textContent = `${rate}%`;
+    $('#m-geocode-sub').textContent = `${n.totals.venues_geocoded} / ${n.totals.venues_total} venues`;
+    $('#m-enriched').textContent = n.totals.raw_events_enriched.toLocaleString();
+    $('#m-enriched-sub').textContent = `of ${n.totals.raw_events_total.toLocaleString()} total raw`;
+    $('#m-flags').textContent = n.totals.quality_flags_total.toLocaleString();
+
+    // CHART
+    renderChart($('#chart-svg'), n.recent_loads);
+  }
+
+  function setConn(up) {
+    const el = $('#conn');
+    el.classList.toggle('disconnected', !up);
+    el.querySelector('span:last-child').textContent = up ? 'connected' : 'reconnecting...';
+  }
+
+  function connect() {
+    const es = new EventSource('/api/stream');
+    es.onmessage = (ev) => {
+      try {
+        const state = JSON.parse(ev.data);
+        render(state);
+        setConn(true);
+        lastConnectAt = Date.now();
+      } catch (e) {
+        // ignore parse errors
+      }
+    };
+    es.onerror = () => {
+      setConn(false);
+      es.close();
+      setTimeout(connect, 3000);
+    };
+  }
+
+  // Watchdog: if no message for 30s, force reconnect (browser SSE handles
+  // most cases but TV scenarios sometimes get stuck).
+  setInterval(() => {
+    if (Date.now() - lastConnectAt > 30000) {
+      setConn(false);
+      // EventSource will re-trigger onerror naturally; but force a reload
+      // if nothing came through for 60s.
+      if (Date.now() - lastConnectAt > 60000) {
+        location.reload();
+      }
+    }
+  }, 10000);
+
+  // Initial fetch (in case SSE is slow to first emit)
+  fetch('/api/state').then(r => r.json()).then(render).catch(() => {});
+
+  connect();
+})();
+</script>
+</body>
+</html>

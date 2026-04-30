@@ -18,7 +18,7 @@ COMMAND=""
 PASSTHROUGH=()
 for arg in "$@"; do
   case "$arg" in
-    snapshot|enrich|geocode|load|scheduler|schedule)
+    snapshot|enrich|geocode|load|scheduler|schedule|dashboard)
       if [[ -z "$COMMAND" ]]; then
         COMMAND="$arg"
       else
@@ -59,6 +59,9 @@ case "$COMMAND" in
     ;;
   schedule|scheduler)
     exec node --experimental-strip-types core/engine/scheduler.ts "${PASSTHROUGH[@]}"
+    ;;
+  dashboard)
+    exec node --experimental-strip-types core/dashboard/server.ts "${PASSTHROUGH[@]}"
     ;;
   geocode)
     echo "run.sh: command '$COMMAND' not yet implemented" >&2

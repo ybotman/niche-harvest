@@ -171,6 +171,9 @@ step_systemd() {
     "$INSTALL_DIR/deploy/pi/systemd/niche-harvest.service" \
     /etc/systemd/system/niche-harvest.service
   install -m 0644 \
+    "$INSTALL_DIR/deploy/pi/systemd/niche-harvest-dashboard.service" \
+    /etc/systemd/system/niche-harvest-dashboard.service
+  install -m 0644 \
     "$INSTALL_DIR/deploy/pi/systemd/niche-harvest-watchdog.service" \
     /etc/systemd/system/niche-harvest-watchdog.service
   install -m 0644 \
