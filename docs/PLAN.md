@@ -26,7 +26,7 @@ mission: M1
 
 **Current phase:** **Phase 3 stage 2 BUILD COMPLETE.** All paths code-ready (--live to TT_Test + --playground to ephemeral cluster). Awaiting Toby per-run auth on either path; nothing live-written yet.
 
-**Current task:** Playground seeded (10,468 docs from TT_Test). Running --playground first load now. Harvey §7.2 duration classifier fix SHIPPED (commits b611c8b + 85fe94a).
+**Current task:** Phase 4 iCal portfolio expansion complete — 7 feeds live (slc-wasatch + seattle + portland-milongas + austin-milongas + minneapolis + tucson + dc-capital-tangueros). 1,046 events loaded to playground across all 7 feeds. Geocode cap fix shipped. Next: more iCal feeds, or Phase 6 FB prep.
 
 **Toby's plate (only-he-can-do):**
 1. **Pick a Phase 3 close path** (3 options):
