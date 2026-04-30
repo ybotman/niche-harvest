@@ -66,8 +66,11 @@ export interface EventDoc {
   // §5.1 hard minimums
   appId: number;
   title: string;
-  startDate: string;        // ISO 8601 UTC Zulu
-  endDate: string;
+  // Date objects (not strings) so Mongo $gte/$lt dedup range queries
+  // match. BSON serializes as ISO 8601 UTC. Was string-typed; broke dedup
+  // (2026-04-30 first --live: 901 dup groups). Fixed in denorm.toUtcDate.
+  startDate: Date;
+  endDate: Date;
   // §5.2 niche-harvest minimums
   categoryFirst: string;
   categoryFirstId: ObjectId | null; // resolved at insert time via category cache

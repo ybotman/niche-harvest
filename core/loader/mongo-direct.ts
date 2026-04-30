@@ -101,7 +101,7 @@ export class MongoDirectLoader implements Loader {
     this.mongoUri = opts.mongoUri;
     this.beUrl = opts.beUrl.replace(/\/+$/, "");
     this.logger = opts.logger;
-    this.shortNameRetryCap = opts.shortNameRetryCap ?? 5;
+    this.shortNameRetryCap = opts.shortNameRetryCap ?? 20;
     this.playgroundMode = opts.playgroundMode ?? false;
     if (this.playgroundMode) {
       this.logger.warn("MongoDirectLoader playground mode active", {
@@ -189,7 +189,11 @@ export class MongoDirectLoader implements Loader {
       return existing._id;
     }
 
-    // §4.2 create with shortName + 409 suffix retry up to cap
+    // §4.2 create with shortName + 409 suffix retry up to cap.
+    // Sequential -1/-2/-3 collides hard when many organizers share the same
+    // base shortName (verified 2026-04-30 first --live: argentinetango4u
+    // collided through -1..-4). Switch to random hex suffix on attempt >= 2
+    // to distribute the namespace and avoid serial collision.
     let shortName = doc.shortName;
     let attempt = 0;
     while (attempt < this.shortNameRetryCap) {
@@ -209,7 +213,14 @@ export class MongoDirectLoader implements Loader {
         result.body.code === "DUPLICATE_SHORTNAME"
       ) {
         attempt += 1;
-        shortName = `${doc.shortName}-${attempt + 1}`;
+        if (attempt === 1) {
+          // First retry: deterministic -1 suffix (most readable)
+          shortName = `${doc.shortName}-1`;
+        } else {
+          // Subsequent retries: random hex suffix, avoid serial collision
+          const suffix = Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+          shortName = `${doc.shortName}-${suffix}`;
+        }
         this.logger.debug("organizer shortName collision; retrying with suffix", {
           fullName: doc.fullName,
           attempt,
@@ -284,12 +295,21 @@ export class MongoDirectLoader implements Loader {
 
     const result = await this.postJson<VenuePostResponse>("/api/venues", doc);
 
-    if (result.status === 201 && "venue" in result.body && result.body.venue) {
-      this.venues_created += 1;
-      return {
-        venueId: result.body.venue._id,
-        masteredChain: extractMasteredChain(result.body.venue),
-      };
+    // 201 happy path. BE-AF returns the venue document directly (verified
+    // 2026-04-30); wrapped {venue: ...} form is supported defensively.
+    if (result.status === 201) {
+      const body = result.body as VenuePostResponse;
+      const venue: VenueResponseShape | null =
+        ("venue" in body && body.venue) ? body.venue
+        : ("_id" in body && (body as VenueResponseShape)._id) ? (body as VenueResponseShape)
+        : null;
+      if (venue) {
+        this.venues_created += 1;
+        return {
+          venueId: venue._id,
+          masteredChain: extractMasteredChain(venue),
+        };
+      }
     }
 
     // §8.3 + §5.4.1: 409 DuplicateError → fetch the existing venue's
@@ -338,11 +358,14 @@ export class MongoDirectLoader implements Loader {
   }
 
   private async fetchVenueById(id: string): Promise<VenueResponseShape | null> {
-    const result = await this.getJson<{ venue?: VenueResponseShape }>(
+    const result = await this.getJson<VenueResponseShape | { venue?: VenueResponseShape }>(
       `/api/venues/${id}`,
     );
     if (result.status !== 200) return null;
-    return result.body.venue ?? null;
+    const body = result.body;
+    if ("venue" in body && body.venue) return body.venue;
+    if ("_id" in body && body._id) return body as VenueResponseShape;
+    return null;
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -429,12 +452,51 @@ export class MongoDirectLoader implements Loader {
   // and organizers per LOADER-CONTRACT §8.2)
   // ─────────────────────────────────────────────────────────────────────
 
+  /**
+   * Retry on transient 5xx (BE-AF Mongo timeouts, Azure cold starts).
+   * Up to 3 attempts with exponential backoff (1s, 3s, 9s). Verified
+   * 2026-04-30 first --live: BE-AF returned 503 ETIMEDOUT to its own
+   * Mongo mid-batch; retries cleared on the second attempt.
+   */
+  private async fetchWithRetry(
+    url: string,
+    init: RequestInit,
+    attempts = 3,
+  ): Promise<Response> {
+    let lastErr: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const res = await fetch(url, init);
+        if (res.status < 500 || i === attempts - 1) return res;
+        // 5xx: log and back off
+        this.logger.warn("BE 5xx; backing off and retrying", {
+          url,
+          status: res.status,
+          attempt: i + 1,
+          of: attempts,
+        });
+      } catch (err) {
+        lastErr = err;
+        this.logger.warn("BE fetch threw; backing off and retrying", {
+          url,
+          error: err instanceof Error ? err.message : String(err),
+          attempt: i + 1,
+          of: attempts,
+        });
+        if (i === attempts - 1) throw err;
+      }
+      await new Promise((r) => setTimeout(r, 1000 * Math.pow(3, i)));
+    }
+    // Unreachable but keep type-checker happy
+    throw lastErr ?? new Error("fetchWithRetry exhausted");
+  }
+
   private async postJson<TBody>(
     path: string,
     body: unknown,
   ): Promise<{ status: number; body: TBody }> {
     const url = `${this.beUrl}${path}`;
-    const res = await fetch(url, {
+    const res = await this.fetchWithRetry(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body),
@@ -452,7 +514,7 @@ export class MongoDirectLoader implements Loader {
     path: string,
   ): Promise<{ status: number; body: TBody }> {
     const url = `${this.beUrl}${path}`;
-    const res = await fetch(url, {
+    const res = await this.fetchWithRetry(url, {
       method: "GET",
       headers: { Accept: "application/json" },
     });
@@ -484,13 +546,18 @@ interface VenueResponseShape {
   masteredCountryName?: string;
 }
 
-interface VenuePostResponse {
-  venue?: VenueResponseShape;
-  existingVenueId?: string;
-  existingVenueName?: string;
-  error?: string;
-  message?: string;
-}
+// BE-AF returns the venue document directly on 201 (verified 2026-04-30 first --live run).
+// The wrapped form `{venue: VenueResponseShape}` was assumed but never observed in practice.
+// Keep both shapes in the union to tolerate either response style.
+type VenuePostResponse =
+  | VenueResponseShape
+  | {
+      venue?: VenueResponseShape;
+      existingVenueId?: string;
+      existingVenueName?: string;
+      error?: string;
+      message?: string;
+    };
 
 function extractMasteredChain(v: VenueResponseShape): VenueMasteredChainResponse {
   return {

@@ -188,11 +188,20 @@ export function buildEventDoc(inputs: EventDocInputs): EventDoc {
   // §5.6 shortTitle: truncate at delimiter, ≤40 chars
   const shortTitle = makeShortTitle(enriched.raw_title);
 
+  // start/endDate stored as Date objects (NOT strings) so dedup queries with
+  // $gte/$lt range comparisons work correctly. iCal start_dt_iso may lack Z
+  // suffix (e.g. "2025-06-04T19:45:00") — new Date() interprets these as
+  // local time which is wrong for UTC-Z contract. Force Z suffix if absent.
+  const toUtcDate = (iso: string): Date => {
+    const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso);
+    return new Date(hasTz ? iso : `${iso}Z`);
+  };
+
   return {
     appId: niche.niche.appid,
     title: enriched.raw_title,
-    startDate: enriched.start_dt_iso,
-    endDate: enriched.end_dt_iso,
+    startDate: toUtcDate(enriched.start_dt_iso),
+    endDate: toUtcDate(enriched.end_dt_iso),
     categoryFirst: cl.category_first ?? "Unknown",
     categoryFirstId: inputs.categoryFirstId as ObjectId | null,
     categorySecond: cl.category_second,

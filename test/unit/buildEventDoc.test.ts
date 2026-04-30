@@ -73,12 +73,14 @@ const baseInputs = {
 // Hard minimums per §5.1
 // ─────────────────────────────────────────────────────────────────────
 
-test("buildEventDoc — appId/title/start/end always populated", () => {
+test("buildEventDoc — appId/title/start/end always populated as UTC Dates", () => {
   const d = buildEventDoc(baseInputs);
   assert.equal(d.appId, 1);
   assert.equal(d.title, "Friday Milonga");
-  assert.equal(d.startDate, "2026-05-29T20:00:00");
-  assert.equal(d.endDate, "2026-05-29T22:00:00");
+  // start_dt_iso "2026-05-29T20:00:00" lacks Z → toUtcDate forces UTC interpretation
+  assert.ok(d.startDate instanceof Date);
+  assert.equal(d.startDate.toISOString(), "2026-05-29T20:00:00.000Z");
+  assert.equal(d.endDate.toISOString(), "2026-05-29T22:00:00.000Z");
 });
 
 test("buildEventDoc — niche appid override propagates", () => {
