@@ -338,13 +338,15 @@
       <div id="site-list" class="sites"></div>
     </section>
 
-    <!-- Q2: FB -->
-    <section class="panel placeholder">
-      <div class="ph-title">FB</div>
-      <div class="ph-sub">
-        Phase 6 — Facebook integration<br>
-        Pre-flight Chromium memory test required first.<br>
-        Block-detector + rate-limiter + watchdog from SAFEGUARD-SPEC.
+    <!-- Q2: Backend (TEST/PROD) — replaces FB placeholder while FB deferred -->
+    <section class="panel" id="q2-backend">
+      <h2>
+        Backend <span id="backend-env-badge" class="badge">off</span>
+      </h2>
+      <div id="backend-body" style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+        <div class="ph-sub" style="text-align: center; color: var(--fg-dim);">
+          Set MONGODB_URI_TEST in .env to enable.
+        </div>
       </div>
     </section>
 
@@ -553,6 +555,69 @@
 
     // CHART
     renderChart($('#chart-svg'), n.recent_loads);
+
+    // Q2 BACKEND
+    renderBackend(state.backend);
+  }
+
+  function renderBackend(b) {
+    if (!b) return;
+    const badge = $('#backend-env-badge');
+    badge.textContent = b.env.toUpperCase();
+    badge.style.color = b.env === 'prod' ? 'var(--err)'
+      : b.env === 'test' ? 'var(--info)'
+      : 'var(--fg-dim)';
+    badge.style.borderColor = b.env === 'prod' ? 'var(--err)'
+      : b.env === 'test' ? 'var(--info)'
+      : 'var(--border)';
+    badge.style.borderStyle = 'solid';
+    badge.style.borderWidth = '1px';
+
+    const body = $('#backend-body');
+    if (b.env === 'off') {
+      body.innerHTML = '<div class="ph-sub" style="text-align:center;color:var(--fg-dim);">Set MONGODB_URI_TEST in .env to enable.</div>';
+      return;
+    }
+    if (b.error) {
+      body.innerHTML = `<div class="ph-sub" style="text-align:center;color:var(--err);">connect error: ${escapeHtml(b.error.slice(0,140))}</div>`;
+      return;
+    }
+    const c = b.counts;
+    const lastSeen = b.last_poll_at ? `polled ${fmtRelative(b.last_poll_at)}` : '—';
+    body.innerHTML = `
+      <div class="site-buckets" style="margin-bottom: 10px;">
+        <div class="site-bucket" style="grid-column: span 2;">
+          <div class="lbl">Events (total)</div>
+          <div class="val" style="color: var(--fg);">${c.events_total.toLocaleString()}</div>
+        </div>
+        <div class="site-bucket completed">
+          <div class="lbl">Discovered</div>
+          <div class="val">${c.events_discovered.toLocaleString()}</div>
+        </div>
+        <div class="site-bucket running">
+          <div class="lbl">appId=99</div>
+          <div class="val">${c.events_appid_99.toLocaleString()}</div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
+        <div class="site-bucket">
+          <div class="lbl">Venues</div>
+          <div class="val" style="font-size: 16px;">${c.venues_total.toLocaleString()}</div>
+          <div class="lbl" style="font-size: 9px; margin-top: 2px;">${c.venues_discovered.toLocaleString()} discovered</div>
+        </div>
+        <div class="site-bucket">
+          <div class="lbl">Organizers</div>
+          <div class="val" style="font-size: 16px;">${c.organizers_total.toLocaleString()}</div>
+        </div>
+        <div class="site-bucket">
+          <div class="lbl">appId=1</div>
+          <div class="val" style="font-size: 16px;">${c.events_appid_1.toLocaleString()}</div>
+        </div>
+      </div>
+      <div style="text-align: center; color: var(--fg-dim); font-size: 11px; margin-top: auto;">
+        ${escapeHtml(lastSeen)}
+      </div>
+    `;
   }
 
   function setConn(up) {

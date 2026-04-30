@@ -23,6 +23,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
+import { MongoClient } from "mongodb";
+
 import { loadNiche, NicheConfigError } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import { PATHS } from "../types.ts";
@@ -102,9 +104,29 @@ interface NicheState {
   }>;
 }
 
+interface BackendState {
+  /** "test" | "prod" | "off" — which backend the dashboard is pointed at */
+  env: "test" | "prod" | "off";
+  /** ISO timestamp of last successful poll; null if never connected */
+  last_poll_at: string | null;
+  /** non-null only on connection error */
+  error: string | null;
+  /** Counts queryable per appId. niche-harvest writes carry isDiscovered=true. */
+  counts: {
+    events_total: number;
+    events_discovered: number;
+    events_appid_1: number;
+    events_appid_99: number;
+    venues_total: number;
+    venues_discovered: number;
+    organizers_total: number;
+  };
+}
+
 interface DashboardState {
   generated_at: string;
   niches: NicheState[];
+  backend: BackendState;
 }
 
 function readHeartbeat(niche: string): NicheState["scheduler"] {
@@ -278,10 +300,103 @@ function readRecentLoads(nicheKey: string): NicheState["recent_loads"] {
   return out;
 }
 
+// ─── Backend state cache (TT_Test or TT_Prod) ───
+// Avoid reconnecting every request. The MongoClient is reused; counts are
+// re-queried on every dashboard tick (cheap — small collections, indexed).
+let mongoClient: MongoClient | null = null;
+let mongoUriCached: string | null = null;
+let lastBackendState: BackendState = {
+  env: "off",
+  last_poll_at: null,
+  error: null,
+  counts: {
+    events_total: 0,
+    events_discovered: 0,
+    events_appid_1: 0,
+    events_appid_99: 0,
+    venues_total: 0,
+    venues_discovered: 0,
+    organizers_total: 0,
+  },
+};
+let backendPollInFlight = false;
+
+async function pollBackend(): Promise<void> {
+  if (backendPollInFlight) return;
+  backendPollInFlight = true;
+  try {
+    const uri = process.env.MONGODB_URI_TEST ?? process.env.MONGODB_URI_PROD ?? null;
+    const env: BackendState["env"] = process.env.MONGODB_URI_PROD
+      ? "prod"
+      : process.env.MONGODB_URI_TEST
+        ? "test"
+        : "off";
+    if (!uri) {
+      lastBackendState = { ...lastBackendState, env: "off", error: "no MONGODB_URI_TEST or MONGODB_URI_PROD set" };
+      return;
+    }
+    if (mongoClient && mongoUriCached !== uri) {
+      try { await mongoClient.close(); } catch {}
+      mongoClient = null;
+    }
+    if (!mongoClient) {
+      mongoClient = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
+      await mongoClient.connect();
+      mongoUriCached = uri;
+    }
+    const db = mongoClient.db();
+    const events = db.collection("events");
+    const venues = db.collection("venues");
+    const organizers = db.collection("organizers");
+
+    const [eventsTotal, eventsDiscovered, eventsAppid1, eventsAppid99, venuesTotal, venuesDiscovered, organizersTotal] = await Promise.all([
+      events.estimatedDocumentCount(),
+      events.countDocuments({ isDiscovered: true }),
+      events.countDocuments({ appId: 1 }),
+      events.countDocuments({ appId: 99 }),
+      venues.estimatedDocumentCount(),
+      venues.countDocuments({ isDiscovered: true }),
+      organizers.estimatedDocumentCount(),
+    ]);
+
+    lastBackendState = {
+      env,
+      last_poll_at: new Date().toISOString(),
+      error: null,
+      counts: {
+        events_total: eventsTotal,
+        events_discovered: eventsDiscovered,
+        events_appid_1: eventsAppid1,
+        events_appid_99: eventsAppid99,
+        venues_total: venuesTotal,
+        venues_discovered: venuesDiscovered,
+        organizers_total: organizersTotal,
+      },
+    };
+  } catch (err) {
+    lastBackendState = {
+      ...lastBackendState,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    backendPollInFlight = false;
+  }
+}
+
 function buildState(opts: DashboardOpts): DashboardState {
+  // Kick off a backend poll if last one was > refreshSeconds ago. Don't
+  // block the response — return last cached state. Fresh data lands on
+  // the next tick (~5s later).
+  const lastAgeMs = lastBackendState.last_poll_at
+    ? Date.now() - Date.parse(lastBackendState.last_poll_at)
+    : Infinity;
+  if (lastAgeMs > opts.refreshSeconds * 1000) {
+    pollBackend().catch(() => {});
+  }
   return {
     generated_at: new Date().toISOString(),
     niches: opts.niches.map(readNicheState),
+    backend: lastBackendState,
   };
 }
 
