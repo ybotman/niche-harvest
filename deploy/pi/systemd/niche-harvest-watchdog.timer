@@ -1,0 +1,12 @@
+[Unit]
+Description=Run niche-harvest watchdog every 5 minutes
+Requires=niche-harvest-watchdog.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=niche-harvest-watchdog.service
+
+[Install]
+WantedBy=timers.target

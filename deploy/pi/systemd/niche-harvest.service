@@ -1,0 +1,57 @@
+[Unit]
+Description=niche-harvest scheduler — autonomous calendar pipeline
+Documentation=https://github.com/ybotman/niche-harvest
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=narvest
+Group=narvest
+WorkingDirectory=/home/narvest/niche-harvest
+Environment="NODE_ENV=production"
+Environment="HOME=/home/narvest"
+EnvironmentFile=/home/narvest/niche-harvest/.env
+
+# Scheduler args set per-niche by override drop-ins:
+# /etc/systemd/system/niche-harvest@.service.d/<niche>.conf
+ExecStart=/usr/bin/env bash run.sh --niche=tango schedule --target=playground --tick=1800
+
+# Restart on failure with exponential backoff
+Restart=on-failure
+RestartSec=30s
+
+# Resource limits — Pi 5 8GB has ~7GB RAM after OS; budget 1.5GB max for scheduler
+# (geocode pass + Chromium for FB will be invoked as child processes)
+MemoryMax=1500M
+CPUQuota=200%
+
+# Watchdog: scheduler writes heartbeat to data/<niche>/scheduler.heartbeat
+# every tick. systemd doesn't enforce this directly; the watchdog.service
+# checks heartbeat freshness and restarts on staleness.
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Logging via journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=niche-harvest
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/narvest/niche-harvest/data /home/narvest/niche-harvest/.env
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

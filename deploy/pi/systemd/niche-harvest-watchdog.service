@@ -1,0 +1,17 @@
+[Unit]
+Description=niche-harvest watchdog — detects scheduler heartbeat staleness
+After=niche-harvest.service
+PartOf=niche-harvest.service
+
+[Service]
+Type=oneshot
+User=narvest
+Group=narvest
+WorkingDirectory=/home/narvest/niche-harvest
+ExecStart=/usr/bin/env bash deploy/pi/scripts/watchdog-check.sh tango 7200
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nh-watchdog
+
+[Install]
+WantedBy=multi-user.target
