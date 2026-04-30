@@ -179,6 +179,7 @@ geocode:
     - DE                           # tango.berlin
     - NL                           # Amsterdam in MAYBE tier (post-M1 inherit)
     - PL                           # Krakow in MAYBE tier
+    - CZ                           # Prague (tango-prague.info — 2026-04-30 added)
     - CH                           # Zürich in MAYBE tier
     - GB                           # UK tango scene (post-M1)
     - IT                           # Italy tango scene (post-M1)
@@ -322,6 +323,188 @@ sources:
         city: Washington
         state: DC
         country: US
+
+    # ── Phase 4 expansion (Harvey's gcal-feeds.yaml inventory; activated
+    #    2026-04-30 after Phase 3 first --live success) ──
+
+    - name: tangoutopia
+      display_name: Triangle Tangueros (Durham/Raleigh/Chapel Hill NC)
+      url: https://calendar.google.com/calendar/ical/triangletango10%40gmail.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/New_York
+      location_default:
+        city: Durham
+        state: NC
+        country: US
+
+    - name: portland-classes
+      display_name: Portland Tango — Classes
+      url: https://calendar.google.com/calendar/ical/c9rrv3td7u1dcooesqr0muolao%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Los_Angeles
+      location_default:
+        city: Portland
+        state: OR
+        country: US
+
+    - name: portland-workshops
+      display_name: Portland Tango — Workshops
+      url: https://calendar.google.com/calendar/ical/r0115kkhdohd1dn90gatv90910%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Los_Angeles
+      location_default:
+        city: Portland
+        state: OR
+        country: US
+
+    - name: austin-classes
+      display_name: Austin Tango Society — Classes
+      url: https://calendar.google.com/calendar/ical/jn6j9aghkkulchvnivkpck2r5g%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Chicago
+      location_default:
+        city: Austin
+        state: TX
+        country: US
+
+    - name: phoenix-milongas
+      display_name: Phoenix Tango — Milongas
+      url: https://calendar.google.com/calendar/ical/1fd992b6b5a17faaa0ee62de2db5e021216d28b6c425ce0a8296f7821326fe92%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Phoenix
+      location_default:
+        city: Phoenix
+        state: AZ
+        country: US
+
+    - name: phoenix-classes
+      display_name: Phoenix Tango — Classes
+      url: https://calendar.google.com/calendar/ical/c8bcf1b2193579a534ef5c6c64d46b59f57168d69a64e4c7108428c3070bc179%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Phoenix
+      location_default:
+        city: Phoenix
+        state: AZ
+        country: US
+
+    - name: boston-master
+      display_name: Boston Tango Society
+      url: https://calendar.google.com/calendar/ical/thetangosocietyofboston%40gmail.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/New_York
+      # NOTE per Harvey: bostontangocalendar.com is OURS (TT.com) — DO NOT scrape that source.
+      # GCal feeds (boston-master + boston-2/3/4 sub-cals) are the right path.
+      location_default:
+        city: Boston
+        state: MA
+        country: US
+
+    - name: denver-master
+      display_name: Colorado Tango (Denver — master)
+      url: https://calendar.google.com/calendar/ical/coloradotangocalendar%40gmail.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Denver
+      # NOTE per Harvey: Denver master + 9 sub-cals total. Master should overlap heavily
+      # with sub-cals — niche-harvest dedup (title+startDate+venueID) handles overlap.
+      location_default:
+        city: Denver
+        state: CO
+        country: US
+
+    - name: pittsburgh-master
+      display_name: Pittsburgh Tangueros (master)
+      url: https://calendar.google.com/calendar/ical/info%40pittsburghtangueros.org/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/New_York
+      location_default:
+        city: Pittsburgh
+        state: PA
+        country: US
+
+    - name: minneapolis-2
+      display_name: Tango Society of Minnesota (Minneapolis — 2)
+      url: https://calendar.google.com/calendar/ical/347e9ua3o9f7ui384taoretodk%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: America/Chicago
+      location_default:
+        city: Minneapolis
+        state: MN
+        country: US
+
+    # ── EU feeds (CZ) — first non-US niches; requires country normalization
+    #    on parseLocation. Harvey patched country-bleed 2026-04-30 sandbox/2026-04-30-harvey-prague-country-fix
+    #    awaiting Toby merge. niche-harvest's parseLocation should NOT default to US for these. ──
+
+    - name: prague-milongas
+      display_name: Tango Prague — Milongas
+      url: https://calendar.google.com/calendar/ical/info%40tango-prague.info/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: Europe/Prague
+      location_default:
+        city: Prague
+        state: ""
+        country: CZ
+
+    - name: prague-workshops
+      display_name: Tango Prague — Workshops
+      url: https://calendar.google.com/calendar/ical/tango-prague.info_sj9j570d291944oosvqb7mv814%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: Europe/Prague
+      location_default:
+        city: Prague
+        state: ""
+        country: CZ
+
+    - name: prague-concerts
+      display_name: Tango Prague — Concerts
+      url: https://calendar.google.com/calendar/ical/tango-prague.info_em80pj8g1qrq4r5a9ej242ss4o%40group.calendar.google.com/public/basic.ics
+      adapter: ical
+      trusted: true
+      priority: high
+      check_interval_days: 3
+      timezone_hint: Europe/Prague
+      location_default:
+        city: Prague
+        state: ""
+        country: CZ
+      # NOTE per Harvey: feed mixes non-tango (jazz/classical at tango venues).
+      # Tango classifier (identityCheck) should already filter these out.
 
   # ───── Web pages ─────
   # Sources: AS-IS-PIPELINE-2026-04-24 inventory + Booker CSV NOT_A_FB_GROUP
