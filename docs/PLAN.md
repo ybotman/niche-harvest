@@ -20,13 +20,29 @@ mission: M1
 
 ## 1. Current state (where are we RIGHT NOW)
 
-**Date of last update:** 2026-04-29 (session 2)
+**Date of last update:** 2026-04-30 (session 3 — Pi M1.5 done + migration kickoff)
 
-**Active mission:** M1 (see `MISSION.md`) — laptop + tango + full functional parity with current pipeline + design-for-90% load rate.
+**Active mission:** M1 + Harvey/Porter migration (see `MISSION.md`).
 
-**Current phase:** **Phase 3 stage 2 BUILD COMPLETE.** All paths code-ready (--live to TT_Test + --playground to ephemeral cluster). Awaiting Toby per-run auth on either path; nothing live-written yet.
+**Current phase:** **M1.5 Pi deployment COMPLETE** + **Migration Stage 1 kickoff** (Toby 2026-04-30).
+- Pi 5 8GB running unattended (systemd scheduler + watchdog + dashboard kiosk on TV)
+- 1,943 loadable events at 89% geocode rate written to playground from Pi
+- Harvey + Porter notified; both asked to SHOFF lessons/queue/inventory
+- Migration target: niche-harvest takes over TT_Test writes at **appId=1** (NOT appId=99 sentinel — Toby 2026-04-30 directive)
 
-**Current task:** Phase 4 iCal portfolio expansion complete — 7 feeds live (slc-wasatch + seattle + portland-milongas + austin-milongas + minneapolis + tucson + dc-capital-tangueros). 1,046 events loaded to playground across all 7 feeds. Geocode cap fix shipped. Next: more iCal feeds, or Phase 6 FB prep.
+**Current task:** Phase 3 first --live to TT_Test appId=99 = **CLEAN SUCCESS** (2026-04-30 evening). 1,914 events / 191 venues / 9 organizers / 0 dupes / 0 failures. nh_batch_id `nh-tango-20260430T202141-1d0f955b`. 5 loader bugs found+fixed during shakeout. Harvey + Porter both delivered comprehensive handover docs. Phase 4 niche.yaml expansion drafted (13 new feeds: tangoutopia, portland-classes/workshops, austin-classes, phoenix-milongas/classes, boston/denver/pittsburgh masters, minneapolis-2, prague×3 EU). NOT YET pulled on Pi — awaits Toby greenlight. Next: Stage 2 cutover (Harvey to dry-run + niche-harvest to appId=1).
+
+**appId strategy update (Toby 2026-04-30 — phased):**
+- Playground: any appId (we cut our teeth here; structural isolation via ephemeral cluster)
+- TEST phase 1 (NOW): appId=99 sentinel — gain confidence on real BE/Mongo writes without TT FE exposure
+- TEST phase 2: appId=1 (real tango) — validate actual production filter/query path; events visible on TT FE TEST
+- PROD: Toby reauth required — promotion to actual tangotiempo.com when TEST appId=1 parity proven
+- Coordination: Harvey dry-runs BEFORE niche-harvest writes appId=1 in TEST (avoid duplicate writes)
+
+**Scope clarification (Toby 2026-04-30):**
+- **Phase 6 FB integration: DEFERRED** — focus is iCal + web through to PROD for the site
+- Web scrapers (Phase 5) still on path — needed for Harvey-off parity
+- FB stays in Booker's hands until later milestone
 
 **Toby's plate (only-he-can-do):**
 1. **Pick a Phase 3 close path** (3 options):
