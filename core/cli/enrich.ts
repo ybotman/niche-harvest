@@ -521,7 +521,16 @@ async function main(): Promise<void> {
     // skipping the venue prefix that confuses Nominatim's free-text parser.
     // Replaces the earlier venue-strip retry heuristic — this is what
     // Harvey's gcal-harvest does to get 90%+ rates on the same feeds.
-    const parsed = parseLocation(v.venue_text);
+    //
+    // Retry pass note (2026-04-30): retry queue sets venue_text = r.name
+    // (just the canonical name, no full address). parseLocation on the name
+    // alone yields no city/state, producing a bare-name query that Nominatim
+    // matches arbitrarily. For retry context (raw_event_ids empty), enrich
+    // venue_text with canonical_city before parsing so city context survives.
+    const queryText = v.raw_event_ids.length === 0 && v.canonical_city
+      ? `${v.canonical_name}, ${v.canonical_city}`
+      : v.venue_text;
+    const parsed = parseLocation(queryText);
     geocodeCalls += 1;
     let result = await geocoder.geocode({
       text: parsed.geocode_query,
