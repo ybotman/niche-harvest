@@ -1,11 +1,12 @@
 ---
 date: 2026-04-25
 persona: narvest
-type: guardrails
+type: decision
 state: draft
 permanence: long-term
-tags: [type/guardrails, app/global, app/tangotiempo, product/mongodb]
+tags: [type/decision, app/global, app/tangotiempo, product/mongodb]
 appid: global
+niche: tango
 reviewers: [toby, quinn, aidi, fulton, sarah, harvey, booker, porter]
 ---
 

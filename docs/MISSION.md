@@ -6,6 +6,7 @@ state: active
 permanence: medium-term
 tags: [type/mission, app/tangotiempo, app/global, product/mongodb, product/geocoding]
 appid: 1
+niche: tango
 mission: M1
 ---
 

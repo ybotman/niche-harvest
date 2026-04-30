@@ -6,6 +6,7 @@ state: active
 permanence: long-term
 tags: [type/mission, app/global, product/mongodb, product/geocoding]
 appid: global
+niche: tango
 ---
 
 # niche-harvest — Vision

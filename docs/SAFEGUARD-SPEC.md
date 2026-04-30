@@ -6,6 +6,7 @@ state: locked
 permanence: long-term
 tags: [type/decision, app/tangotiempo, product/mongodb]
 appid: 1
+niche: tango
 reviewers: [aidi, booker]
 locked_at: 2026-04-25
 locked_by: [aidi, booker]
