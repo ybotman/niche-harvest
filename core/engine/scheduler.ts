@@ -155,6 +155,9 @@ async function tick(opts: SchedulerOpts, log: ReturnType<typeof createLogger>): 
     log.info("no sources due", {
       next_check_at: next?.toISOString() ?? "none",
     });
+    // Heartbeat on idle ticks too — watchdog needs proof of life every cycle,
+    // not just when there's work. Otherwise idle scheduler looks dead.
+    writeHeartbeat(opts.niche, "idle");
     db.close();
     return;
   }
