@@ -390,12 +390,28 @@ function unescapeIcs(text: string): string {
 // always keep RRULE-bearing events (they may recur within window).
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Pre-classify "fakes filter" — drop obvious junk at scrape time so it never
+ * reaches SQLite/classify/geocode. Per Harvey's blind-spot #1 (2026-04-30
+ * advisor handover): saves ~12% of upstream noise.
+ *
+ * Drops:
+ *   - Empty / placeholder / TEST / DEMO / INTRO TEST / (test) titles (case-insensitive)
+ *   - CANCELLED status
+ *   - dtstart out of [now - 7 days, now + 365 days] window (when parseable)
+ *
+ * Note: the recurrence cap (Phase 5 design intent) is NOT here — currently
+ * relies on GCal API server-side timeMax window. Direct .ics fetches with
+ * unbounded RRULE remain a Phase 5 concern.
+ */
 function isRelevant(
   ev: IcalEvent,
   lookbackDays = 7,
   lookaheadDays = 365,
 ): boolean {
   if (ev.status === "CANCELLED") return false;
+  if (!isRealTitle(ev.summary)) return false;
+
   if (ev.rrule) return true; // recurring — always relevant within FE expansion window
   const now = Date.now();
   const lookback = now - lookbackDays * 86_400_000;
@@ -403,6 +419,28 @@ function isRelevant(
   const t = Date.parse(ev.dtstart);
   if (Number.isNaN(t)) return true; // can't parse date → keep, let enrich handle
   return t >= lookback && t <= lookahead;
+}
+
+// Conservative patterns — false-positive prone words like "sample" / "trial"
+// are NOT in the list because real events use them ("Tango Sampler",
+// "Free Trial Class"). The patterns here are markers a human ops team
+// inserts as placeholders, never a real event title.
+export const FAKE_TITLE_PATTERNS = [
+  /^\s*$/i,                  // empty/whitespace
+  /\bplaceholder\b/i,
+  /\bdemo\b/i,
+  /\(test\)/i,
+  /\bintro\s+test\b/i,
+  /^\s*tbd\s*$/i,
+  /^\s*tba\s*$/i,
+];
+
+export function isRealTitle(title: string | undefined | null): boolean {
+  if (!title) return false;
+  for (const re of FAKE_TITLE_PATTERNS) {
+    if (re.test(title)) return false;
+  }
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
