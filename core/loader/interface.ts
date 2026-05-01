@@ -26,7 +26,7 @@ import type { ObjectId } from "mongodb";
 export interface OrganizerDoc {
   fullName: string;
   shortName: string;
-  appId: number;
+  appId: string;  // Mongo convention: string "1" not number 1 (Porter+FE; 2026-05-01)
   fb_profile_url?: string;
   discovery_type?: string;
   event_count?: number;
@@ -50,7 +50,7 @@ export interface VenueDoc {
   city?: string;
   state?: string;
   country?: string;
-  appId: number;
+  appId: string;  // Mongo convention: string "1" not number 1 (Porter+FE; 2026-05-01)
   isDiscovered: true;
   discoverySource: string;
   /** GUARDRAILS H11: per-cycle UUID; rollback = deleteMany({discoveryBatchId}). */
@@ -64,7 +64,7 @@ export interface VenueDoc {
  */
 export interface EventDoc {
   // §5.1 hard minimums
-  appId: number;
+  appId: string;  // Mongo convention: string "1" not number 1 (Porter+FE; 2026-05-01)
   title: string;
   // Date objects (not strings) so Mongo $gte/$lt dedup range queries
   // match. BSON serializes as ISO 8601 UTC. Was string-typed; broke dedup

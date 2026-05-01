@@ -75,7 +75,7 @@ const baseInputs = {
 
 test("buildEventDoc — appId/title/start/end always populated as UTC Dates", () => {
   const d = buildEventDoc(baseInputs);
-  assert.equal(d.appId, 1);
+  assert.equal(d.appId, "1");
   assert.equal(d.title, "Friday Milonga");
   // start_dt_iso "2026-05-29T20:00:00" lacks Z → toUtcDate forces UTC interpretation
   assert.ok(d.startDate instanceof Date);
@@ -86,7 +86,7 @@ test("buildEventDoc — appId/title/start/end always populated as UTC Dates", ()
 test("buildEventDoc — niche appid override propagates", () => {
   const niche99: NicheConfig = { ...tangoNiche, niche: { ...tangoNiche.niche, appid: 99 } };
   const d = buildEventDoc({ ...baseInputs, niche: niche99 });
-  assert.equal(d.appId, 99);
+  assert.equal(d.appId, "99");
 });
 
 // ─────────────────────────────────────────────────────────────────────

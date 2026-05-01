@@ -66,7 +66,7 @@ export function buildVenueDoc(
     name: v.name,
     latitude: v.lat,
     longitude: v.lng,
-    appId: niche.niche.appid,
+    appId: String(niche.niche.appid),  // FE+Porter convention: string not number (2026-05-01)
     isDiscovered: true,
     discoverySource: niche.loader.discovery_source,
     discoveryBatchId: discoveryBatchId,
@@ -127,7 +127,7 @@ export function buildOrganizerDoc(
   const doc: OrganizerDoc = {
     fullName,
     shortName: sn,
-    appId: niche.niche.appid,
+    appId: String(niche.niche.appid),  // FE+Porter convention: string not number (2026-05-01)
     isDiscovered: true,
     discoverySource: niche.loader.discovery_source,
     discoveryBatchId: discoveryBatchId,
@@ -198,7 +198,7 @@ export function buildEventDoc(inputs: EventDocInputs): EventDoc {
   };
 
   return {
-    appId: niche.niche.appid,
+    appId: String(niche.niche.appid),  // FE+Porter convention: string not number (2026-05-01)
     title: enriched.raw_title,
     startDate: toUtcDate(enriched.start_dt_iso),
     endDate: toUtcDate(enriched.end_dt_iso),
