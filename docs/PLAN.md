@@ -20,7 +20,9 @@ mission: M1
 
 ## 1. Current state (where are we RIGHT NOW)
 
-**Date of last update:** 2026-04-30 (session 3 — Pi M1.5 done + migration kickoff)
+**Date of last update:** 2026-05-01 (session 4 — **Stage 2 SUCCESS** + appId type fix + per-event error catch)
+
+**STAGE 2 LANDED 2026-05-01 ~20:22 BST.** First --live to TT_Test at REAL appId=1 (no sentinel). 2,183 events / 119 venues / 0 failures (1 venue per-event-catch save). discoveryBatchId nh-tango-20260501T193655-d70ff4a2. After appId-type patch (number → string), all writes visible to TT FE TEST. Dress-rehearsal for PROD complete — same mechanic, only URI + governance gates differ.
 
 **Active mission:** M1 + Harvey/Porter migration (see `MISSION.md`).
 
