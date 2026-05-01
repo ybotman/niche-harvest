@@ -183,10 +183,16 @@ function readNicheState(nicheKey: string): NicheState {
   const dbPath = PATHS.nicheSqlite(nicheKey);
   if (!existsSync(dbPath)) return empty;
 
+  // Note: DatabaseSync `readOnly: true` looked safer but combined with
+  // SQLite WAL mode (used by store.ts) causes silent open failures because
+  // WAL needs to create .wal/.shm sidecar files. Open default; we only
+  // ever execute SELECT statements here so writes never happen.
   let db: DatabaseSync;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
-  } catch {
+    db = new DatabaseSync(dbPath);
+  } catch (err) {
+    // Log instead of silently returning empty — easier to diagnose
+    process.stderr.write(`dashboard: failed to open ${dbPath}: ${err instanceof Error ? err.message : err}\n`);
     return empty;
   }
 

@@ -32,7 +32,10 @@ SyslogIdentifier=nh-dashboard
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadOnlyPaths=/home/narvest/niche-harvest
+# SQLite WAL mode needs to create .wal and .shm sidecar files even on read.
+# Without write access to the data dir, DatabaseSync silently fails and
+# dashboard returns empty state. Verified 2026-05-01.
+ReadWritePaths=/home/narvest/niche-harvest/data
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
