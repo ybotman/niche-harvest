@@ -29,6 +29,8 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import type { ObjectId } from "mongodb";
+
 import { loadNiche, NicheConfigError } from "../config.ts";
 import { createLogger } from "../logger.ts";
 import { openStore } from "../store.ts";
@@ -473,6 +475,8 @@ async function main(): Promise<void> {
     loader: loader.name,
   });
 
+  let eventsFailedVenue = 0;     // upsertVenue threw after retries (BE 5xx exhausted)
+  let eventsFailedInsert = 0;    // insertEvent threw (mongo error mid-batch)
   let skippedNoVenue = 0;
   let skippedVenueNotGeocoded = 0;
   let skippedNoDates = 0;
@@ -539,6 +543,10 @@ async function main(): Promise<void> {
     }
 
     // ─── 2. Venue (POST or 409→existing) ───
+    // Per-event resilience: catch upsertVenue / insertEvent errors so one
+    // BE-AF transient or one bad venue doesn't kill the whole batch (Stage 2
+    // first --live 2026-05-01: a single 500 ETIMEDOUT on venue POST after
+    // retries threw, killing the run mid-batch). Log + skip + continue.
     const venueRow: VenueRow = {
       id: row.v_id,
       name: row.v_name,
@@ -550,7 +558,22 @@ async function main(): Promise<void> {
       lng: row.v_lng,
     };
     const venueDoc = buildVenueDoc(venueRow, effectiveNiche, discoveryBatchId);
-    const { venueId, masteredChain } = await loader.upsertVenue(venueDoc);
+    let venueId: string | object;
+    let masteredChain: VenueMasteredChainResponse;
+    try {
+      const upsertResult = await loader.upsertVenue(venueDoc);
+      venueId = upsertResult.venueId;
+      masteredChain = upsertResult.masteredChain;
+    } catch (err) {
+      log.warn("upsertVenue failed; skipping event", {
+        venue_name: row.v_name,
+        venue_city: row.v_city,
+        re_id: row.re_id,
+        error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+      });
+      eventsFailedVenue += 1;
+      continue;
+    }
     if (capturedVenues.length < opts.samples) {
       capturedVenues.push({ doc: venueDoc, resolvedId: venueId, masteredChain });
     }
@@ -592,7 +615,18 @@ async function main(): Promise<void> {
       categoryFirstId: categoryFirstId,
       discoveryBatchId,
     });
-    const evResult = await loader.insertEvent(eventDoc);
+    let evResult: { eventId: ObjectId | string; status: "inserted" | "skipped_existing" | "failed"; detail?: string };
+    try {
+      evResult = await loader.insertEvent(eventDoc);
+    } catch (err) {
+      log.warn("insertEvent threw; counting as failed and continuing", {
+        title: row.re_raw_title,
+        re_id: row.re_id,
+        error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+      });
+      eventsFailedInsert += 1;
+      continue;
+    }
     if (capturedEvents.length < opts.samples) {
       capturedEvents.push({
         doc: eventDoc,
@@ -668,6 +702,8 @@ async function main(): Promise<void> {
     skipped_no_venue: skippedNoVenue,
     skipped_venue_not_geocoded: skippedVenueNotGeocoded,
     skipped_no_dates: skippedNoDates,
+    events_failed_venue: eventsFailedVenue,
+    events_failed_insert: eventsFailedInsert,
     counts,
     ...(organizerSkipReason ? { organizer_skip_reason: organizerSkipReason } : {}),
   });
