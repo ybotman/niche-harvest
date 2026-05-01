@@ -115,54 +115,57 @@
     max-width: 80%;
   }
 
-  /* Site list */
+  /* Site list — 2-column grid layout (handles 20+ feeds) */
   .sites {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 8px;
     overflow-y: auto;
     flex: 1;
+    align-content: start;
   }
   .site-row {
     display: grid;
-    grid-template-columns: 14px 1fr auto;
-    gap: 10px;
+    grid-template-columns: 10px 1fr auto;
+    gap: 8px;
     align-items: center;
-    padding: 8px 10px;
+    padding: 6px 8px;
     background: var(--panel-2);
-    border-radius: 4px;
-    font-size: 14px;
+    border-radius: 3px;
+    font-size: 12px;
+    min-width: 0; /* allow truncation */
   }
   .site-row .dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
   }
   .site-row.ok .dot { background: var(--ok); }
   .site-row.warn .dot { background: var(--warn); }
   .site-row.err .dot { background: var(--err); }
-  .site-row.info .dot { background: var(--info); }
-  .site-row .name { font-weight: 500; }
-  .site-row .info {
-    font-size: 12px;
-    color: var(--fg-dim);
-    margin-top: 2px;
-    font-variant-numeric: tabular-nums;
+  .site-row.info .dot {
+    background: var(--info);
+    box-shadow: 0 0 4px var(--info);
+    animation: pulse 1.2s ease-in-out infinite;
   }
-  .site-row .next {
-    font-size: 12px;
-    color: var(--fg-dim);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-  .site-row .err-msg {
-    grid-column: 2 / span 2;
-    color: var(--err);
-    font-size: 11px;
-    margin-top: 4px;
+  .site-row .name {
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .site-row .next {
+    font-size: 10px;
+    color: var(--fg-dim);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .site-row.err .next {
+    color: var(--err);
+  }
+  .site-row.err .name {
+    color: var(--err);
   }
 
   /* Status pill for scheduler */
@@ -456,21 +459,25 @@
     else if (isRunning) cls = 'info';
     else if (!s.last_checked_at) cls = 'warn';
 
-    const last = s.last_checked_at
-      ? `last ${fmtRelative(s.last_checked_at)} · ${s.events_found_last ?? 0} events`
-      : 'never run';
-    const next = s.next_check_at ? `next ${fmtRelative(s.next_check_at)}` : '—';
-    const errLine = hasErr ? `<div class="err-msg">${escapeHtml(String(s.last_error).slice(0, 200))}</div>` : '';
+    // Single-line: name + next-update relative. Errors get red styling
+    // (no separate error message line — keeps compact 2-col grid usable
+    // for 20+ feeds).
+    const next = hasErr
+      ? 'error'
+      : s.next_check_at
+        ? fmtRelative(s.next_check_at)
+        : 'never';
+    const title = hasErr
+      ? `Error: ${String(s.last_error).slice(0, 200)}`
+      : s.last_checked_at
+        ? `Last checked ${fmtRelative(s.last_checked_at)} · ${s.events_found_last ?? 0} events`
+        : 'Not yet run';
 
     return `
-      <div class="site-row ${cls}">
+      <div class="site-row ${cls}" title="${escapeHtml(title)}">
         <div class="dot"></div>
-        <div>
-          <div class="name">${escapeHtml(s.source_id)}</div>
-          <div class="info">${last}</div>
-          ${errLine}
-        </div>
-        <div class="next">${next}</div>
+        <div class="name">${escapeHtml(s.source_id)}</div>
+        <div class="next">${escapeHtml(next)}</div>
       </div>
     `;
   }
