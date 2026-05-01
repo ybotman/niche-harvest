@@ -66,7 +66,7 @@ const baseInputs = {
   venueId: "dryrun-venue-1" as string,
   ownerOrganizerID: null,
   categoryFirstId: null,
-  nhBatchId: "nh-tango-test-batch-id",
+  discoveryBatchId: "nh-tango-test-batch-id",
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -101,10 +101,10 @@ test("buildEventDoc — isDiscovered + discoverySource + trustLevel + enrichment
   assert.equal(d.enrichmentStatus, "complete");
 });
 
-test("buildEventDoc — GUARDRAILS H11: nh_batch_id propagates through to event doc", () => {
+test("buildEventDoc — GUARDRAILS H11: discoveryBatchId propagates through to event doc", () => {
   // Critical for rollback; without this the doc isn't roll-back-able.
-  const d = buildEventDoc({ ...baseInputs, nhBatchId: "nh-tango-rollback-test" });
-  assert.equal(d.nh_batch_id, "nh-tango-rollback-test");
+  const d = buildEventDoc({ ...baseInputs, discoveryBatchId: "nh-tango-rollback-test" });
+  assert.equal(d.discoveryBatchId, "nh-tango-rollback-test");
 });
 
 // ─────────────────────────────────────────────────────────────────────

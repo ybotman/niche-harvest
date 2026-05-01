@@ -96,7 +96,7 @@ interface NicheState {
   };
   recent_loads: Array<{
     date: string;
-    nh_batch_id: string | null;
+    discoveryBatchId: string | null;
     events_inserted: number;
     venues_created: number;
     organizers_created: number;
@@ -282,7 +282,7 @@ function readRecentLoads(nicheKey: string): NicheState["recent_loads"] {
       const path = join(dir, f.name);
       const raw = readFileSync(path, "utf8");
       const report = JSON.parse(raw) as {
-        nh_batch_id?: string;
+        discoveryBatchId?: string;
         this_run?: {
           counts?: { events_inserted?: number; venues_created?: number; organizers_created?: number };
         };
@@ -293,7 +293,7 @@ function readRecentLoads(nicheKey: string): NicheState["recent_loads"] {
       const qf = report.quality_flags_this_batch ?? {};
       out.push({
         date,
-        nh_batch_id: report.nh_batch_id ?? null,
+        discoveryBatchId: report.discoveryBatchId ?? null,
         events_inserted: counts.events_inserted ?? 0,
         venues_created: counts.venues_created ?? 0,
         organizers_created: counts.organizers_created ?? 0,

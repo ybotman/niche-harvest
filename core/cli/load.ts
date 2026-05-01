@@ -163,7 +163,7 @@ interface LoadReport {
    */
   target_appid: number;
   /** GUARDRAILS H11: per-cycle UUID for rollback. Format: nh-<niche>-<utc>-<8>. */
-  nh_batch_id: string;
+  discoveryBatchId: string;
   /** Pre-built rollback command — paste-ready when needed. */
   rollback_commands: {
     events: string;
@@ -333,15 +333,15 @@ async function main(): Promise<void> {
   // Format: nh-<niche>-<utc-yyyymmddThhmmss>-<8-char-uuid-suffix>
   // Human-readable + sortable + collision-safe. Threaded through every
   // doc; report records it at top so rollback is trivial:
-  //   db.events.deleteMany({nh_batch_id: "<id-from-report>"})
-  const nhBatchId = `nh-${opts.niche}-${new Date()
+  //   db.events.deleteMany({discoveryBatchId: "<id-from-report>"})
+  const discoveryBatchId = `nh-${opts.niche}-${new Date()
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\..+$/, "")}-${randomUUID().slice(0, 8)}`;
-  log.info("nh_batch_id assigned", {
-    nh_batch_id: nhBatchId,
+  log.info("discoveryBatchId assigned", {
+    discoveryBatchId: discoveryBatchId,
     note: "rollback any --live writes from this run via " +
-          "db.<collection>.deleteMany({nh_batch_id: <id>})",
+          "db.<collection>.deleteMany({discoveryBatchId: <id>})",
   });
 
   // ─── AIDI Phase 3 gate item #3: --mongo-verify ───
@@ -528,7 +528,7 @@ async function main(): Promise<void> {
     // ─── 1. Organizer (lookup-or-create) ───
     let ownerOrganizerID: string | null = null;
     if (row.re_raw_organizer_text) {
-      const orgDoc = buildOrganizerDoc(row.re_raw_organizer_text, effectiveNiche, nhBatchId);
+      const orgDoc = buildOrganizerDoc(row.re_raw_organizer_text, effectiveNiche, discoveryBatchId);
       if (orgDoc) {
         const id = await loader.upsertOrganizer(orgDoc);
         ownerOrganizerID = String(id);
@@ -549,7 +549,7 @@ async function main(): Promise<void> {
       lat: row.v_lat,
       lng: row.v_lng,
     };
-    const venueDoc = buildVenueDoc(venueRow, effectiveNiche, nhBatchId);
+    const venueDoc = buildVenueDoc(venueRow, effectiveNiche, discoveryBatchId);
     const { venueId, masteredChain } = await loader.upsertVenue(venueDoc);
     if (capturedVenues.length < opts.samples) {
       capturedVenues.push({ doc: venueDoc, resolvedId: venueId, masteredChain });
@@ -590,7 +590,7 @@ async function main(): Promise<void> {
       venueId,
       ownerOrganizerID,
       categoryFirstId: categoryFirstId,
-      nhBatchId,
+      discoveryBatchId,
     });
     const evResult = await loader.insertEvent(eventDoc);
     if (capturedEvents.length < opts.samples) {
@@ -717,11 +717,11 @@ async function main(): Promise<void> {
     generated_at: new Date().toISOString(),
     loader: opts.playground ? "playground" : opts.live ? "mongo-direct" : "dry-run",
     target_appid: appIdInUse,
-    nh_batch_id: nhBatchId,
+    discoveryBatchId: discoveryBatchId,
     rollback_commands: {
-      events: `db.events.deleteMany({nh_batch_id: "${nhBatchId}"})`,
-      venues: `db.venues.deleteMany({nh_batch_id: "${nhBatchId}"})`,
-      organizers: `db.organizers.deleteMany({nh_batch_id: "${nhBatchId}"})`,
+      events: `db.events.deleteMany({discoveryBatchId: "${discoveryBatchId}"})`,
+      venues: `db.venues.deleteMany({discoveryBatchId: "${discoveryBatchId}"})`,
+      organizers: `db.organizers.deleteMany({discoveryBatchId: "${discoveryBatchId}"})`,
     },
     mongo_verify: mongoVerifyReport,
     categories_cache: {
